@@ -1,0 +1,35 @@
+# Build outputs
+build/
+[Bb]uild/
+[Dd]ebug/
+[Rr]elease/
+Objects/
+Listings/
+*.o
+*.obj
+*.d
+*.elf
+*.axf
+*.hex
+*.bin
+*.map
+*.lst
+*.log
+
+# IDE user state
+*.uvguix.*
+*.uvoptx
+*.ewt
+*.dep
+.vs/
+
+# Local caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.DS_Store
+Thumbs.db
+
+# Local-only reference copies
+docs/references/*
+!docs/references/README.md
