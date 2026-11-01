@@ -1,8 +1,8 @@
-# C 板 BMI088 外设配置
+# C 板 BMI088 外设与驱动
 
-本次配置的是标准 RoboMaster C 板的 BMI088 六轴 IMU，已同步修改
-`firmware/chassis/chassis.ioc` 及对应 HAL 初始化代码。
-这是 MCU 外设配置，尚不包含 BMI088 寄存器驱动、数据采集、标定或姿态解算。
+标准 RoboMaster C 板的 BMI088 六轴 IMU。MCU 外设配置（CubeMX/HAL）与寄存器级
+SPI 驱动都已就位，并配有可在无硬件条件下运行的主机测试。
+**尚未在真实硬件上验证**，也还没有姿态解算。
 
 ## CubeMX 参数
 
@@ -19,14 +19,11 @@
 
 SPI1：8 bit、MSB First、CPOL=High、CPHA=2 Edge（Mode 3）、Software NSS，
 Prescaler=16。当前 PCLK2=84 MHz，SPI 时钟为 5.25 MHz，低于器件 10 MHz 上限。
-没有开启 SPI DMA；后续先完成短报文轮询读取，再按采样频率需要增加 DMA。
+没有开启 SPI DMA：单帧最长 8 字节，轮询读取的耗时远小于 1 kHz 控制周期。
 SYS 保持 Serial Wire 调试，避免 JTAG 占用 PB3/PB4。
 
 EXTI4、EXTI9_5 中断抢占优先级均为 3，低于遥控器、CAN 和 TIM6。
-中断入口已调用 `HAL_GPIO_EXTI_IRQHandler()` 清除挂起标志；当前使用 HAL
-默认空回调。后续通过 `HAL_GPIO_EXTI_Callback()` 设置采样标志，主循环或任务
-读取 SPI，不在 EXTI 中执行延时、阻塞传输或姿态计算。EXTI9_5 为共享向量，
-若以后启用其他 EXTI6..9，需在该入口增加对应分发。
+EXTI9_5 为共享向量，若以后启用其他 EXTI6..9，需在 `EXTI9_5_IRQHandler` 里增加分发。
 
 TIM10 时钟为 168 MHz（APB2 分频后定时器时钟倍频），PSC=167、ARR=999：
 
@@ -34,26 +31,127 @@ TIM10 时钟为 168 MHz（APB2 分频后定时器时钟倍频），PSC=167、ARR
 PWM frequency = 168000000 / (168 * 1000) = 1000 Hz
 ```
 
-主程序尚未启动 TIM10 PWM，初始比较值为零。后续只有在温度读数可信、
-温控限幅和超温/失联关闭逻辑齐备后才启动加热；不能直接输出固定满占空比。
+主程序尚未启动 TIM10 PWM，初始比较值为零。启动加热前必须先做完温度读数校验、
+限幅和超温/失联关断。
 
-## 后续驱动需要完成的工作
+## 驱动文件
 
-1. 分别操作两个片选，初始化 BMI088 的加速度计和陀螺仪并核对芯片 ID。
-2. 按数据手册处理上电、软复位等待及加速度计 SPI 接口切换和读操作 dummy byte。
-3. 设置量程、输出数据率、滤波器，配置传感器 INT 为高有效推挽，映射数据就绪。
-   仅配置 STM32 EXTI 不会让传感器自动输出中断。
-4. 读取加速度、角速度和温度，转换物理单位，检查通信错误与数据新鲜度。
-5. 按实际板子安装方向设置轴映射；静止条件下标定陀螺仪零偏，再进行姿态融合。
+- `modules/imu/bmi088.h`：对外接口与数据结构
+- `modules/imu/bmi088.c`：SPI 帧、初始化序列、数据读取、零偏标定
+- `tests/test_bmi088.c`：用寄存器模型模拟两颗 die 的主机测试
 
-BMI088 本身是六轴器件，不能提供绝对航向，纯六轴解算的 yaw 会漂移。
-本次没有配置 C 板另一个 IST8310 磁力计。
-现有遥控器合法帧喂狗保持不变，后续 IMU 初始化不应绕过这项保护。
+BMI088 是“一颗封装、两颗 die”：加速度计和陀螺仪各有独立片选、独立寄存器空间，
+而且 **SPI 读帧格式不同**——加速度计在地址字节后多一个 dummy 字节，陀螺仪没有。
+驱动用 `BMI088_Target.dummy_bytes` 区分，两处写序列也因此不能共用。
 
-## 验证状态
+## 初始化序列
 
-Debug 固件编译通过；未连接硬件验证芯片 ID、SPI 波形、中断频率或温度读数。
-`.ioc` 为文本同步修改，未通过 CubeMX GUI 重新生成验证；打开后可按上表复核。
+`BMI088_Init(&hspi1)` 依次写入下列寄存器，任何一步 SPI 失败或芯片 ID 不符都返回
+`HAL_ERROR`：
+
+| die | 寄存器 | 值 | 含义 |
+| --- | --- | --- | --- |
+| 加速度计 | 0x7F 读 | — | 上电为 I2C 模式，一次带片选的读操作才切到 SPI |
+| 加速度计 | 0x7E | 0xB6 | 软复位，等 2 ms（手册 ≥1 ms） |
+| 加速度计 | 0x00 | 读回 0x1E | 芯片 ID |
+| 加速度计 | 0x7D | 0x04 | 加速度计上电 |
+| 加速度计 | 0x7C | 0x00 | 退出 suspend |
+| 加速度计 | 0x40 | 0xA8 | 800 Hz、normal 带宽（bit7 为手册要求必须置位） |
+| 加速度计 | 0x41 | 0x01 | ±6 g |
+| 加速度计 | 0x53/0x54 | 0x0A | INT1/INT2：输出使能、推挽、高有效 |
+| 加速度计 | 0x58 | 0x04 | 数据就绪映射到 INT1 |
+| 陀螺仪 | 0x14 | 0xB6 | 软复位，等 30 ms |
+| 陀螺仪 | 0x00 | 读回 0x0F | 芯片 ID |
+| 陀螺仪 | 0x0F | 0x00 | ±2000 dps |
+| 陀螺仪 | 0x10 | 0x01 | 1000 Hz 输出率 / 230 Hz 滤波 |
+| 陀螺仪 | 0x11 | 0x00 | normal 模式（非 suspend/LPM） |
+| 陀螺仪 | 0x15 | 0x80 | 使能数据就绪中断 |
+| 陀螺仪 | 0x16 | 0x00 | INT3 推挽、高有效 |
+| 陀螺仪 | 0x18 | 0x01 | 数据就绪映射到 INT3 |
+
+整个初始化约 35 ms 的阻塞延时，必须在主循环之前调用；IWDG 约 802 ms，余量充足。
+
+## 数据通路
+
+```text
+EXTI4/EXTI9_5 → HAL_GPIO_EXTI_Callback → BMI088_ExtiCallback（只置位标志）
+主循环 → BMI088_Service（按标志读 SPI、换算、更新快照）→ BMI088_GetSample
+```
+
+中断里不做 SPI 传输、不做浮点运算，避免和数据就绪中断抢总线，
+也让 1 kHz 控制周期可以对 SPI 访问排他。`BMI088_Service` 的返回值只在**收到新的
+陀螺仪样本**时为 true，可作为控制周期的触发条件；只更新了加速度计时返回 false。
+
+单位换算：
+
+```text
+accel [m/s^2] = raw * (6 g * 9.80665 / 32768)
+gyro  [dps]   = raw * (2000 / 32768)
+temp  [degC]  = raw11 * 0.125 + 23
+```
+
+## 陀螺仪零偏标定
+
+考核要求上电后数秒内完成 IMU 零漂，且期间只能发零指令。标定因此是**非阻塞**的：
+
+```c
+BMI088_StartGyroCalibration(BMI088_CALIBRATION_SAMPLES); /* 1 kHz 下约 1 s */
+/* 期间照常调 BMI088_Service()，IWDG 由遥控器帧继续喂 */
+```
+
+`BMI088_Service` 在窗口内累积原始角速度（未减零偏，所以重复标定不会把旧零偏
+叠进去）。窗口结束时：
+
+- 三轴均值作为零偏，`calibrated = true`，后续样本自动减去；
+- 若任一轴峰峰值超过 `BMI088_CALIBRATION_MAX_SPREAD_DPS`（2 dps），判定标定期间
+  被移动，`failed = true`，**保留旧零偏**并把 `spread_dps` 报出来给上层决定是否重试。
+
+标定结果通过 `BMI088_GetGyroCalibration()` 取快照，供调试器观察和安全状态机使用。
+
+## 接口速查
+
+| 函数 | 用途 |
+| --- | --- |
+| `HAL_StatusTypeDef BMI088_Init(SPI_HandleTypeDef *hspi)` | 校验是 SPI1、跑完初始化序列；可重复调用重试 |
+| `void BMI088_ExtiCallback(uint16_t gpio_pin)` | 由 `HAL_GPIO_EXTI_Callback` 转发 |
+| `bool BMI088_Service(void)` | 主循环里读数据，有新陀螺仪样本时为 true |
+| `bool BMI088_GetSample(BMI088_Sample *out)` | 快照；返回 false 表示数据过期或未初始化 |
+| `bool BMI088_IsOnline(uint32_t timeout_ms)` | 数据就绪是否在超时内 |
+| `bool BMI088_StartGyroCalibration(uint16_t samples)` | 启动零偏窗口，不阻塞 |
+| `void BMI088_GetGyroCalibration(BMI088_GyroCalibration *out)` | 标定状态快照 |
+
+## 测试
+
+```bash
+python tests/run_motor_tests.py --imu
+```
+
+测试在 Unicorn Cortex-M4 上跑真实驱动源码，用寄存器模型模拟两颗 die：按片选决定
+哪颗芯片应答、加速度计读操作额外吞掉一个 dummy 字节、寄存器自动递增。覆盖：
+
+- 参数与状态拒绝（空指针、非 SPI1、未初始化就取数）
+- 芯片 ID 错时必须初始化失败，且失败后可以重试
+- 上表所有初始化写序列的字面值
+- 加速度、角速度、温度的换算（16384 LSB = 3 g、3276 LSB ≈ 200 dps、0x0150 → 24.25 ℃）
+- 标定：静止窗口接受并扣除、运动窗口拒绝且保留旧零偏
+- SPI 错误计数、样本过期判定
+
+## 尚未在硬件上验证
+
+1. **芯片 ID 与写序列**取自数据手册；若实测 ID 读不到，先查片选电平、SPI Mode 3、
+   CS 拉低到首个时钟的建立时间，以及 SPI1 是否被 SYS/JTAG 占用。
+2. **陀螺仪 0x10 的档位编码**和 **INT 极性/映射位**需用示波器确认：EXTI 配的是
+   上升沿，若传感器实际输出低有效就永远等不到中断。
+3. **轴安装方向**未知，驱动输出的是传感器轴；板→底盘（x 前、y 左、z 上）的映射
+   还没做。
+4. 温度换算（0.125 ℃/LSB、+23 ℃ 偏移）未与实测比对。
+5. 未配置 C 板另一颗 IST8310 磁力计，六轴解算的 yaw 会漂移。
+
+## 后续工作
+
+- `modules/attitude`：姿态解算（Mahony/互补滤波）+ 安装矩阵，产出全局系姿态角
+- TIM10 加热闭环：温度可信后才启动，必须带占空比限幅和超温/失联关断
+- 上电零漂期间只发零电流：目前主循环本来就只发零电流，接入控制后要保持这个约束
 
 参考：[RoboMaster C 板用户手册](https://rm-static.djicdn.com/tem/35228/RoboMaster%20%20%E5%BC%80%E5%8F%91%E6%9D%BF%20C%20%E5%9E%8B%E7%94%A8%E6%88%B7%E6%89%8B%E5%86%8C.pdf)、
 [Bosch BMI088 数据手册](https://www.bosch-sensortec.com/media/boschsensortec/downloads/datasheets/bst-bmi088-ds001.pdf)。
