@@ -30,6 +30,7 @@
 /* USER CODE BEGIN Includes */
 #include "m3508_can.h"
 #include "dr16.h"
+#include "bmi088.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -55,6 +56,10 @@ volatile HAL_StatusTypeDef motor_can_tx_status = HAL_OK;
 volatile HAL_StatusTypeDef remote_rx_status = HAL_OK;
 volatile bool remote_online = false;
 DR16_State remote_state;
+volatile HAL_StatusTypeDef imu_init_status = HAL_ERROR;
+volatile bool imu_online = false;
+BMI088_Sample imu_sample;
+BMI088_GyroCalibration imu_calibration;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -119,6 +124,10 @@ int main(void)
     Error_Handler();
   }
   uint32_t last_motor_tx_ms = HAL_GetTick() - 10U;
+  /* The IMU is not fatal at boot: a missing or miswired chip must not stop the
+   * chassis from being tested, so the loop retries instead of Error_Handler. */
+  imu_init_status = BMI088_Init(&hspi1);
+  uint32_t last_imu_init_ms = HAL_GetTick();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -130,6 +139,17 @@ int main(void)
     /* USER CODE BEGIN 3 */
     remote_rx_status = DR16_Service();
     const uint32_t now = HAL_GetTick();
+    if (imu_init_status != HAL_OK && (uint32_t)(now - last_imu_init_ms) >= 1000U)
+    {
+      last_imu_init_ms = now;
+      imu_init_status = BMI088_Init(&hspi1);
+    }
+    if (imu_init_status == HAL_OK)
+    {
+      (void)BMI088_Service();
+      imu_online = BMI088_GetSample(&imu_sample);
+      BMI088_GetGyroCalibration(&imu_calibration);
+    }
     if ((uint32_t)(now - last_motor_tx_ms) >= 10U)
     {
       last_motor_tx_ms = now;
@@ -204,6 +224,12 @@ void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
   M3508_CAN_RxFifo1Callback(hcan);
+}
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  /* Data-ready only sets a flag; the SPI read happens in the main loop. */
+  BMI088_ExtiCallback(GPIO_Pin);
 }
 /* USER CODE END 4 */
 

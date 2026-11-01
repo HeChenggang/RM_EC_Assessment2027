@@ -120,6 +120,8 @@ target_sources(${PROJECT_NAME} PRIVATE ../../modules/remote/dr16.c)
 target_include_directories(${PROJECT_NAME} PRIVATE ../../modules/remote)
 target_sources(${PROJECT_NAME} PRIVATE ../../modules/control/pid.c)
 target_include_directories(${PROJECT_NAME} PRIVATE ../../modules/control)
+target_sources(${PROJECT_NAME} PRIVATE ../../modules/imu/bmi088.c)
+target_include_directories(${PROJECT_NAME} PRIVATE ../../modules/imu)
 message(STATUS "Project name: ${PROJECT_NAME}")
 
 add_subdirectory(cmake/stm32cubemx)
