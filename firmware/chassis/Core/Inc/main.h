@@ -57,6 +57,16 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+#define IMU_ACCEL_CS_Pin GPIO_PIN_4
+#define IMU_ACCEL_CS_GPIO_Port GPIOA
+#define IMU_GYRO_CS_Pin GPIO_PIN_0
+#define IMU_GYRO_CS_GPIO_Port GPIOB
+#define IMU_ACCEL_INT_Pin GPIO_PIN_4
+#define IMU_ACCEL_INT_GPIO_Port GPIOC
+#define IMU_ACCEL_INT_EXTI_IRQn EXTI4_IRQn
+#define IMU_GYRO_INT_Pin GPIO_PIN_5
+#define IMU_GYRO_INT_GPIO_Port GPIOC
+#define IMU_GYRO_INT_EXTI_IRQn EXTI9_5_IRQn
 
 /* USER CODE BEGIN Private defines */
 
