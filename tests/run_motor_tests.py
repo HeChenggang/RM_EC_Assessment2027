@@ -1,7 +1,13 @@
 """Run Cortex-M4 driver tests without hardware (pip install unicorn==2.1.4).
 
 Requires arm-none-eabi-gcc, objcopy and nm on PATH. HAL doubles verify software
-behavior only; they cannot validate physical CAN timing, wiring or ACKs.
+behavior only; they cannot validate physical CAN, UART or SPI timing, wiring,
+termination or ACKs.
+
+  python tests/run_motor_tests.py             # M3508/C620 CAN driver
+  python tests/run_motor_tests.py --remote    # DT7/DR16 receiver
+  python tests/run_motor_tests.py --pid       # PID controller
+  python tests/run_motor_tests.py --imu       # BMI088 IMU
 """
 import pathlib
 import subprocess
@@ -13,20 +19,26 @@ from unicorn.arm_const import UC_ARM_REG_LR, UC_ARM_REG_R0, UC_ARM_REG_SP, UC_AR
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FW = ROOT / "firmware/chassis"
-REMOTE = "--remote" in sys.argv
-PID = "--pid" in sys.argv
-MODULE = "control/pid" if PID else ("remote/dr16" if REMOTE else "motor/m3508_can")
-TEST = "test_pid.c" if PID else ("test_dr16.c" if REMOTE else "test_m3508_can.c")
+# flag -> (module source without extension, test file, instruction budget)
+CASES = {
+    "--motor": ("motor/m3508_can", "test_m3508_can.c", 1000000),
+    "--remote": ("remote/dr16", "test_dr16.c", 1000000),
+    "--pid": ("control/pid", "test_pid.c", 10000000),
+    "--imu": ("imu/bmi088", "test_bmi088.c", 2000000),
+}
+SELECTED = next((flag for flag in CASES if flag in sys.argv), "--motor")
+MODULE, TEST, BUDGET = CASES[SELECTED]
 
 
 def run(*args):
     return subprocess.check_output([str(a) for a in args], text=True)
 
 
-with tempfile.TemporaryDirectory(prefix="m3508-test-") as directory:
+with tempfile.TemporaryDirectory(prefix="rm-driver-test-") as directory:
     elf = pathlib.Path(directory) / "test.elf"
     binary = pathlib.Path(directory) / "test.bin"
-    includes = [ROOT / "modules/motor", ROOT / "modules/remote", ROOT / "modules/control", FW / "Core/Inc",
+    includes = [ROOT / "modules/motor", ROOT / "modules/remote", ROOT / "modules/control",
+                ROOT / "modules/imu", FW / "Core/Inc",
                 FW / "Drivers/STM32F4xx_HAL_Driver/Inc",
                 FW / "Drivers/CMSIS/Include",
                 FW / "Drivers/CMSIS/Device/ST/STM32F4xx/Include"]
@@ -44,11 +56,11 @@ with tempfile.TemporaryDirectory(prefix="m3508-test-") as directory:
     cpu.mem_map(0x10000, 0x200000)  # Code, data and zero-initialized BSS.
     cpu.mem_write(0x10000, binary.read_bytes())
     cpu.mem_map(0x20000000, 0x10000)
-    cpu.mem_map(0x40000000, 0x40000)  # UART status/data register reads during recovery.
+    cpu.mem_map(0x40000000, 0x40000)  # UART/SPI status and data register reads during recovery.
     cpu.reg_write(UC_ARM_REG_SP, 0x20010000)
     stop = 0x1f0000
     cpu.reg_write(UC_ARM_REG_LR, stop | 1)
-    cpu.emu_start(entry | 1, stop, count=10000000 if PID else 1000000)
+    cpu.emu_start(entry | 1, stop, count=BUDGET)
     if cpu.reg_read(UC_ARM_REG_PC) != stop:
         raise SystemExit("FAIL: test did not return within instruction budget")
     result = cpu.reg_read(UC_ARM_REG_R0)
