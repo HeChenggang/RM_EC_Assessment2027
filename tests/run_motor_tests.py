@@ -8,6 +8,7 @@ termination or ACKs.
   python tests/run_motor_tests.py --remote    # DT7/DR16 receiver
   python tests/run_motor_tests.py --pid       # PID controller
   python tests/run_motor_tests.py --imu       # BMI088 IMU
+  python tests/run_motor_tests.py --chassis   # Mecanum kinematics
 """
 import pathlib
 import subprocess
@@ -25,6 +26,7 @@ CASES = {
     "--remote": ("remote/dr16", "test_dr16.c", 1000000),
     "--pid": ("control/pid", "test_pid.c", 10000000),
     "--imu": ("imu/bmi088", "test_bmi088.c", 2000000),
+    "--chassis": ("chassis/mecanum", "test_mecanum.c", 3000000),
 }
 SELECTED = next((flag for flag in CASES if flag in sys.argv), "--motor")
 MODULE, TEST, BUDGET = CASES[SELECTED]
@@ -38,7 +40,7 @@ with tempfile.TemporaryDirectory(prefix="rm-driver-test-") as directory:
     elf = pathlib.Path(directory) / "test.elf"
     binary = pathlib.Path(directory) / "test.bin"
     includes = [ROOT / "modules/motor", ROOT / "modules/remote", ROOT / "modules/control",
-                ROOT / "modules/imu", FW / "Core/Inc",
+                ROOT / "modules/imu", ROOT / "modules/chassis", FW / "Core/Inc",
                 FW / "Drivers/STM32F4xx_HAL_Driver/Inc",
                 FW / "Drivers/CMSIS/Include",
                 FW / "Drivers/CMSIS/Device/ST/STM32F4xx/Include"]
