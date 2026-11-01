@@ -114,6 +114,12 @@ target_include_directories(drivers PUBLIC ${core_incs} ${drivers_incs})
 # Add an executable for the project
 file(GLOB_RECURSE startup_file "*.s")
 add_executable(${PROJECT_NAME} ${project_srcs} ${startup_file})
+target_sources(${PROJECT_NAME} PRIVATE ../../modules/motor/m3508_can.c)
+target_include_directories(${PROJECT_NAME} PRIVATE ../../modules/motor)
+target_sources(${PROJECT_NAME} PRIVATE ../../modules/remote/dr16.c)
+target_include_directories(${PROJECT_NAME} PRIVATE ../../modules/remote)
+target_sources(${PROJECT_NAME} PRIVATE ../../modules/control/pid.c)
+target_include_directories(${PROJECT_NAME} PRIVATE ../../modules/control)
 message(STATUS "Project name: ${PROJECT_NAME}")
 
 add_subdirectory(cmake/stm32cubemx)

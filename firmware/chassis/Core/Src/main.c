@@ -28,7 +28,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "m3508_can.h"
+#include "dr16.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -49,7 +50,11 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+/* Visible in the debugger. HAL_OK only means the frame was queued. */
+volatile HAL_StatusTypeDef motor_can_tx_status = HAL_OK;
+volatile HAL_StatusTypeDef remote_rx_status = HAL_OK;
+volatile bool remote_online = false;
+DR16_State remote_state;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -104,7 +109,16 @@ int main(void)
   MX_USART6_UART_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-
+  if (M3508_CAN_Init(&hcan2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  const int16_t zero_currents[M3508_COUNT] = {0};
+  if (DR16_Init(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  uint32_t last_motor_tx_ms = HAL_GetTick() - 10U;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -114,6 +128,14 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    remote_rx_status = DR16_Service();
+    const uint32_t now = HAL_GetTick();
+    if ((uint32_t)(now - last_motor_tx_ms) >= 10U)
+    {
+      last_motor_tx_ms = now;
+      remote_online = DR16_GetState(&remote_state);
+      motor_can_tx_status = M3508_CAN_SendCurrents(zero_currents);
+    }
   }
   /* USER CODE END 3 */
 }
@@ -165,7 +187,24 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
+{
+  if (DR16_RxEventCallback(huart, Size))
+  {
+    /* Only a newly decoded, valid remote frame can refresh the watchdog. */
+    (void)HAL_IWDG_Refresh(&hiwdg);
+  }
+}
 
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+  DR16_ErrorCallback(huart);
+}
+
+void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *hcan)
+{
+  M3508_CAN_RxFifo1Callback(hcan);
+}
 /* USER CODE END 4 */
 
 /**
