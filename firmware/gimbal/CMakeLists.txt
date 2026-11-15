@@ -10,7 +10,8 @@ add_executable(gimbal)
 add_subdirectory(cmake/stm32cubemx)
 target_link_libraries(gimbal stm32cubemx)
 target_sources(gimbal PRIVATE ../../modules/imu/bmi088.c)
-target_include_directories(gimbal PRIVATE ../../modules/imu ../../config)
+target_sources(gimbal PRIVATE ../../modules/motor/dm4340_drv.c ../../modules/motor/pitch_motor.c)
+target_include_directories(gimbal PRIVATE ../../modules/imu ../../modules/motor ../../config)
 target_compile_options(gimbal PRIVATE -mthumb)
 
 add_custom_command(TARGET gimbal POST_BUILD

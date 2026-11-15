@@ -5,6 +5,7 @@ behavior only; they cannot validate physical CAN, UART or SPI timing, wiring,
 termination or ACKs.
 
   python tests/run_motor_tests.py             # M3508/C620 CAN driver
+  python tests/run_motor_tests.py --pitch     # DM4340 pitch component
   python tests/run_motor_tests.py --remote    # DT7/DR16 receiver
   python tests/run_motor_tests.py --pid       # PID controller
   python tests/run_motor_tests.py --imu       # BMI088 IMU
@@ -22,6 +23,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 FW = ROOT / "firmware/chassis"
 # flag -> (module source without extension, test file, instruction budget)
 CASES = {
+    "--pitch": ("motor/pitch_motor", "test_pitch_motor.c", 2000000),
     "--motor": ("motor/m3508_can", "test_m3508_can.c", 1000000),
     "--remote": ("remote/dr16", "test_dr16.c", 1000000),
     "--pid": ("control/pid", "test_pid.c", 10000000),
@@ -40,7 +42,7 @@ with tempfile.TemporaryDirectory(prefix="rm-driver-test-") as directory:
     elf = pathlib.Path(directory) / "test.elf"
     binary = pathlib.Path(directory) / "test.bin"
     includes = [ROOT / "modules/motor", ROOT / "modules/remote", ROOT / "modules/control",
-                ROOT / "modules/imu", ROOT / "modules/chassis", FW / "Core/Inc",
+                ROOT / "modules/imu", ROOT / "modules/chassis", ROOT / "config", FW / "Core/Inc",
                 FW / "Drivers/STM32F4xx_HAL_Driver/Inc",
                 FW / "Drivers/CMSIS/Include",
                 FW / "Drivers/CMSIS/Device/ST/STM32F4xx/Include"]
@@ -49,6 +51,7 @@ with tempfile.TemporaryDirectory(prefix="rm-driver-test-") as directory:
         "-DUSE_HAL_DRIVER", "-DSTM32F407xx", "-nostdlib",
         "-Wl,-Ttext=0x10000", "-Wl,-e,main",
         *[f"-I{p}" for p in includes], ROOT / f"modules/{MODULE}.c",
+        *([ROOT / "modules/motor/dm4340_drv.c"] if SELECTED == "--pitch" else []),
         ROOT / f"tests/{TEST}", "-lc", "-lgcc", "-o", elf)
     run("arm-none-eabi-objcopy", "-O", "binary", elf, binary)
     symbols = run("arm-none-eabi-nm", elf)

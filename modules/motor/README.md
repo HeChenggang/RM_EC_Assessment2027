@@ -79,3 +79,7 @@ python tests/run_motor_tests.py
 长度检查、负数解析、电流字节序与限幅、邮箱忙、离线超时及计时回绕。
 不代替 CAN 硬件验证。上板先架空底盘，检查四轮反馈及电调 ID，再接入
 遥控器保护和单轮小电流闭环；暂不要直接填满量程电流。
+
+## 云台 Pitch
+
+DM4340 驱动与 CAN2 Pitch 组件见 [pitch_motor.md](pitch_motor.md)。

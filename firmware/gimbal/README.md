@@ -21,7 +21,7 @@ STM32CubeF4 V1.28.3；云台 Core、启动文件、链接脚本与构建目录�
 
 CAN 位时序：42 MHz / (3 × (1 + 6 + 7)) = 1 Mbit/s。
 电机映射集中在 `config/gimbal_board.h`：Yaw TX_ID=3、RX_ID=0x13，
-Pitch TX_ID=9、RX_ID=0x19，ID 命名遵循考核文档；尚未绑定具体 DM 控制模式。
+Pitch TX_ID=9、RX_ID=0x19，ID 命名遵循考核文档。Pitch 组件暂选 MIT 模式，发送控制前必须核对实机模式。
 遥控器在底盘板 USART3，上板不直接初始化 DR16。模板保留 USART3/USART6 的
 生成配置与 IRQ，主程序不初始化或启动这两个串口。TIM4 同样只初始化、不输出 PWM。
 
@@ -44,15 +44,17 @@ cmake --build firmware/gimbal/build/Release
 
 ## 当前运行行为与后续工作
 
-主循环只初始化并采集 BMI088，可在调试器观察 `imu_init_status`、`imu_online`、
-`imu_sample`。不启动 CAN、不发电机指令、不使能电机，也不启动加热。
+主循环初始化并采集 BMI088，同时通过 Pitch 组件启动 CAN2 的 FIFO1 反馈接收。
+调试器可观察 `imu_init_status`、`imu_online`、`imu_sample`、`pitch_init_status`、
+`pitch_feedback` 和 `pitch_online`（100 ms 超时）。CAN1 尚未启动；不发电机指令、
+不使能电机，也不启动加热。DM 电机可能需要请求才返回反馈，未收到反馈并不单独证明接线错误。
 没有沿用底盘的 M3508 零电流广播，以免错误作用于上板摩擦轮。
 
 **当前未实现板间协议，因此没有合法指令解包点，也不喂 IWDG；固件会约每 802 ms
 复位。** 这是外设配置阶段的固件，不是可运行的云台控制程序。
 IMU 零偏标定和姿态解算尚未接入；目前的复位周期也不足以完成默认 1000 样本标定。
 接入控制前需定义并实现板间命令帧、完整性检查、有效帧处喂狗、超时与急停处理，
-以及 DM 驱动、Yaw 连续角度、Pitch 实测限位和零位、输出限幅及启动标定状态机。
+以及 Yaw 驱动与连续角度、Pitch 实测限位和零位、输出限幅及启动标定状态机。
 视觉协议和 RX 接收方式也需随后实现。不得将任意 CAN 帧当成有效命令喂狗。
 
 重新由 CubeMX 生成后需复核：HAL/CMSIS 共用路径、自定义顶层 CMake、
@@ -64,3 +66,9 @@ USART3/USART6 未启动的约定、共享模块链接及 USER CODE。CubeMX 生�
 Arm GNU 14.3.1 下 Debug 与 Release 均编译链接成功，生成 ELF/HEX/BIN；
 `python tests/run_motor_tests.py --imu` 通过。尚未进行实机烧录、总线收发、
 IMU 采样和看门狗复位验证。
+
+## Pitch 组件（2026-11-15）
+
+已加入基于用户提供 DM4340 驱动适配的 C/HAL 组件，详见
+[Pitch 组件说明](../../modules/motor/pitch_motor.md)。控制 API 已提供，但主程序不调用；
+电机状态反馈不会刷新 IWDG。Debug/Release 构建及 `--pitch` 主机测试通过，未实机验证。

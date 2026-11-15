@@ -29,6 +29,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "bmi088.h"
+#include "pitch_motor.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -54,6 +55,9 @@ volatile HAL_StatusTypeDef imu_init_status = HAL_ERROR;
 volatile bool imu_online = false;
 BMI088_Sample imu_sample;
 BMI088_GyroCalibration imu_calibration;
+volatile HAL_StatusTypeDef pitch_init_status = HAL_ERROR;
+volatile bool pitch_online = false;
+PitchMotor_Feedback pitch_feedback;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -106,8 +110,9 @@ int main(void)
   MX_TIM10_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-  /* CAN is configured but remains stopped until motor and board protocols
-   * are implemented. Do not transmit chassis M3508 frames from this board. */
+  /* Receive only at application level; no motor enable or control frames.
+   * Confirm the physical motor's mode before calling any command API. */
+  pitch_init_status = PitchMotor_Init(&hcan2, DM4340_MIT_MODE);
   imu_init_status = BMI088_Init(&hspi1);
   /* USER CODE END 2 */
 
@@ -118,6 +123,8 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    (void)PitchMotor_GetFeedback(&pitch_feedback);
+    pitch_online = PitchMotor_IsOnline(100U);
     if (imu_init_status == HAL_OK)
     {
       (void)BMI088_Service();
@@ -175,6 +182,11 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *hcan)
+{
+  PitchMotor_RxFifo1Callback(hcan);
+}
+
 /* Feed IWDG only after a valid chassis command is decoded. The protocol is
  * not defined yet, so this bring-up image intentionally times out/resets. */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
