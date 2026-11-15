@@ -200,11 +200,13 @@ int main(void)
     CHECK(!CHASSIS_RR_BENCH && !CHASSIS_RR_DIRECT_TEST);
     cc = chassis_config();
     cc.max_translation = CHASSIS_TRANSLATION_LIMIT_MPS;
+    cc.translation_accel = CHASSIS_TRANSLATION_ACCEL_MPS2;
     cc.geometry.max_motor_rpm = CHASSIS_MAX_ROTOR_RPM;
     const int8_t directions[4] = CHASSIS_WHEEL_DIRECTIONS;
     for (unsigned i = 0; i < 4; ++i) {
         cc.geometry.motor_direction[i] = directions[i];
         cc.wheel_pid[i] = (PID_Config){.kp = CHASSIS_SPEED_KP,
+            .ki = CHASSIS_SPEED_KI, .integral_limit = CHASSIS_SPEED_INTEGRAL_LIMIT_RAW,
             .output_limit = CHASSIS_CURRENT_LIMIT_RAW, .max_dt = cc.max_dt};
     }
     CHECK(Chassis_Init(&robot.chassis, &cc));
@@ -222,5 +224,24 @@ int main(void)
     fresh[3] = false;
     CHECK(!Chassis_Step(&robot.chassis, &cmd, 0, stopped_rpm, fresh, true, 0.01f, &drive));
     for (unsigned i = 0; i < 4; ++i) CHECK(drive.current[i] == 0);
+    /* Both lateral directions reach the floor-test target within 0.5 s.
+     * Also verify diagonal motion is not clipped by the rotor limit. */
+    fresh[3] = true;
+    for (int side = -1; side <= 1; side += 2) {
+        Chassis_Reset(&robot.chassis);
+        cmd.forward = 0;
+        cmd.left = (float)side;
+        for (unsigned step = 0; step < 50; ++step)
+            CHECK(Chassis_Step(&robot.chassis, &cmd, 0, stopped_rpm, fresh, true, 0.01f, &drive));
+        CHECK(NEAR(drive.velocity.vy, side * 0.60f, 0.001f));
+        CHECK(NEAR(drive.wheels.scale, 1.0f, 0.001f));
+    }
+    Chassis_Reset(&robot.chassis);
+    cmd.forward = 1;
+    cmd.left = 1;
+    for (unsigned step = 0; step < 50; ++step)
+        CHECK(Chassis_Step(&robot.chassis, &cmd, 0, stopped_rpm, fresh, true, 0.01f, &drive));
+    CHECK(NEAR(hypotf(drive.velocity.vx, drive.velocity.vy), 0.60f, 0.001f));
+    CHECK(NEAR(drive.wheels.scale, 1.0f, 0.001f));
     return 0;
 }

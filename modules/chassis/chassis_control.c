@@ -67,6 +67,11 @@ bool Chassis_Step(ChassisControl *s, const RobotCommand *cmd, float yaw,
     for (unsigned i = 0; i < 4; ++i) {
         float current;
         if (!PID_Update(&s->wheel[i], result.wheels.motor_rpm[i], rpm[i], dt, &current)) goto stop;
+        if (result.wheels.motor_rpm[i] == 0.0f) {
+            /* Brake proportionally at zero target without accumulating bias. */
+            current = Motion_Clamp(s->wheel[i].p, c->wheel_pid[i].output_limit);
+            PID_Reset(&s->wheel[i]);
+        }
         result.current[i] = (int16_t)current;
     }
     s->previous = v;

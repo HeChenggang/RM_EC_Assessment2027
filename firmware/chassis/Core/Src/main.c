@@ -137,7 +137,8 @@ static bool InitChassisControl(void)
     .geometry = MECANUM_DEFAULT_CONFIG,
     .max_translation = CHASSIS_TRANSLATION_LIMIT_MPS,
     .max_rotation = 1.0f, .spin_rate = 0.5f, .follow_kp = 1.0f,
-    .translation_accel = 0.5f, .rotation_accel = 1.0f, .max_dt = 0.025f
+    .translation_accel = CHASSIS_TRANSLATION_ACCEL_MPS2,
+    .rotation_accel = 1.0f, .max_dt = 0.025f
   };
   const int8_t direction[M3508_COUNT] = CHASSIS_WHEEL_DIRECTIONS;
   config.geometry.max_motor_rpm = CHASSIS_MAX_ROTOR_RPM;
@@ -145,7 +146,9 @@ static bool InitChassisControl(void)
   {
     config.geometry.motor_direction[i] = direction[i];
     config.wheel_pid[i] = (PID_Config){
-      .kp = CHASSIS_SPEED_KP, .output_limit = CHASSIS_CURRENT_LIMIT_RAW,
+      .kp = CHASSIS_SPEED_KP, .ki = CHASSIS_SPEED_KI,
+      .output_limit = CHASSIS_CURRENT_LIMIT_RAW,
+      .integral_limit = CHASSIS_SPEED_INTEGRAL_LIMIT_RAW,
       .max_dt = config.max_dt
     };
   }
@@ -276,6 +279,11 @@ static void ServiceChassisDrive(const RobotCommand *command, float dt)
     PID_Reset(&rr_bench_pid);
 #else
   ChassisOutput output;
+  if (command->forward == 0.0f && command->left == 0.0f)
+  {
+    chassis_control.previous.vx = 0.0f;
+    chassis_control.previous.vy = 0.0f;
+  }
   if (!Chassis_Step(&chassis_control, command, 0.0f, rpm, fresh, allowed, dt, &output) && allowed)
     chassis_gate = (SafetyGate){.state = SAFETY_FAULT};
 #endif
