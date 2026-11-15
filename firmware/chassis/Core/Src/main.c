@@ -28,6 +28,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "board_link.h"
 #include "command.h"
 #include "chassis_control.h"
 #include "chassis_setup.h"
@@ -55,6 +56,8 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+volatile HAL_StatusTypeDef board_link_tx_status = HAL_ERROR;
+static uint8_t board_link_sequence;
 /* Visible in the debugger. HAL_OK only means the frame was queued. */
 volatile HAL_StatusTypeDef motor_can_tx_status = HAL_OK;
 volatile HAL_StatusTypeDef remote_rx_status = HAL_OK;
@@ -105,6 +108,29 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static void SendBoardCommand(const RobotCommand *command)
+{
+  LinkFrame frames[3];
+  /* CAN1 belongs to this sender. Drop/abort a stale batch instead of queuing
+   * old control commands behind a disconnected bus. */
+  if (HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) != 3U) {
+    (void)HAL_CAN_AbortTxRequest(&hcan1, CAN_TX_MAILBOX0 | CAN_TX_MAILBOX1 | CAN_TX_MAILBOX2);
+    board_link_tx_status = HAL_BUSY;
+    return;
+  }
+  if (!Link_EncodeCommand(command, board_link_sequence++, frames)) return;
+  for (unsigned i = 0; i < 3; ++i) {
+    CAN_TxHeaderTypeDef header = {.StdId = frames[i].id, .IDE = CAN_ID_STD,
+                                .RTR = CAN_RTR_DATA, .DLC = 8};
+    uint32_t mailbox;
+    board_link_tx_status = HAL_CAN_AddTxMessage(&hcan1, &header, frames[i].data, &mailbox);
+    if (board_link_tx_status != HAL_OK) {
+      (void)HAL_CAN_AbortTxRequest(&hcan1, CAN_TX_MAILBOX0 | CAN_TX_MAILBOX1 | CAN_TX_MAILBOX2);
+      break;
+    }
+  }
+}
+
 static bool InitChassisControl(void)
 {
   ChassisConfig config = {
@@ -309,6 +335,7 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_CAN1_Init();
+  board_link_tx_status = HAL_CAN_Start(&hcan1);
   MX_TIM6_Init();
   MX_SPI1_Init();
   MX_TIM4_Init();
@@ -379,6 +406,7 @@ int main(void)
       RobotCommand command;
       (void)Remote_Map(&remote_map, &input, &command);
       remote_command = command;
+      SendBoardCommand(&command);
       ServiceChassisDrive(&command, (float)elapsed * 0.001f);
     }
   }

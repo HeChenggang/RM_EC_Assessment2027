@@ -31,6 +31,8 @@
 #include "bmi088.h"
 #include "gimbal_board.h"
 #include "pitch_motor.h"
+#include "board_link.h"
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -67,6 +69,12 @@ volatile uint16_t yaw_velocity_raw;
 volatile uint16_t yaw_torque_raw;
 volatile uint8_t yaw_motor_state;
 volatile bool yaw_online;
+static LinkReceiver command_rx;
+RobotCommand board_command;
+volatile bool board_link_online;
+volatile uint32_t board_command_count;
+static volatile uint32_t watchdog_generation;
+static uint32_t watchdog_consumed;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -92,6 +100,17 @@ static HAL_StatusTypeDef StartYawFeedback(void)
     .SlaveStartFilterBank = 14
   };
   HAL_StatusTypeDef status = HAL_CAN_ConfigFilter(&hcan1, &filter);
+  if (status != HAL_OK) return status;
+  /* A second bank receives exactly the three command fragment IDs. */
+  CAN_FilterTypeDef link_filter = {
+    .FilterBank = 1, .FilterMode = CAN_FILTERMODE_IDLIST,
+    .FilterScale = CAN_FILTERSCALE_16BIT,
+    .FilterIdHigh = 0x300U << 5, .FilterIdLow = 0x301U << 5,
+    .FilterMaskIdHigh = 0x302U << 5, .FilterMaskIdLow = 0x302U << 5,
+    .FilterFIFOAssignment = CAN_FILTER_FIFO0, .FilterActivation = ENABLE,
+    .SlaveStartFilterBank = 14
+  };
+  status = HAL_CAN_ConfigFilter(&hcan1, &link_filter);
   if (status != HAL_OK) return status;
   status = HAL_CAN_Start(&hcan1);
   if (status != HAL_OK) return status;
@@ -144,6 +163,7 @@ int main(void)
   /* Receive only at application level; no motor enable or control frames.
    * Confirm the physical motor's mode before calling any command API. */
   pitch_init_status = PitchMotor_Init(&hcan2, DM4340_MIT_MODE);
+  (void)Link_Init(&command_rx, LINK_COMMAND, 20U, 100U);
   yaw_init_status = StartYawFeedback();
   imu_init_status = BMI088_Init(&hspi1);
   /* USER CODE END 2 */
@@ -155,6 +175,18 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    /* Snapshot decoder state while its CAN ISR cannot modify it. Feed here,
+     * not in the ISR, so a stalled main loop still trips the watchdog. */
+    const uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    board_link_online = Link_GetCommand(&command_rx, HAL_GetTick(), &board_command);
+    const uint32_t generation = watchdog_generation;
+    __set_PRIMASK(primask);
+    if (generation != watchdog_consumed) {
+      watchdog_consumed = generation;
+      if (board_link_online && board_command.remote_valid)
+        (void)HAL_IWDG_Refresh(&hiwdg);
+    }
     (void)PitchMotor_GetFeedback(&pitch_feedback);
     pitch_online = PitchMotor_IsOnline(100U);
     yaw_online = yaw_rx_count != 0U &&
@@ -224,6 +256,16 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
     CAN_RxHeaderTypeDef header;
     uint8_t data[8];
     if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &header, data) != HAL_OK) break;
+    if (header.IDE == CAN_ID_STD && header.RTR == CAN_RTR_DATA &&
+        header.DLC == 8U && header.StdId >= 0x300U && header.StdId <= 0x302U) {
+      LinkFrame frame = {.id = (uint16_t)header.StdId, .dlc = 8};
+      memcpy(frame.data, data, 8);
+      if (Link_Receive(&command_rx, &frame, HAL_GetTick())) {
+        ++board_command_count;
+        if (command_rx.message.command.remote_valid) ++watchdog_generation;
+      }
+      continue;
+    }
     if (header.IDE != CAN_ID_STD || header.RTR != CAN_RTR_DATA ||
         header.StdId != GIMBAL_YAW_RX_ID || header.DLC != 8U ||
         (data[0] & 0x0FU) != GIMBAL_YAW_TX_ID) continue;
@@ -241,8 +283,7 @@ void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *hcan)
   PitchMotor_RxFifo1Callback(hcan);
 }
 
-/* Feed IWDG only after a valid chassis command is decoded. The protocol is
- * not defined yet, so this bring-up image intentionally times out/resets. */
+/* Motor feedback and incomplete/duplicate commands never feed IWDG. */
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   /* Data-ready only sets a flag; the SPI read happens in the main loop. */
