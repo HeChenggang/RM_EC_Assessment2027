@@ -6,6 +6,8 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_executable(gimbal)
+add_subdirectory(../../modules ${CMAKE_CURRENT_BINARY_DIR}/robot_logic)
+target_link_libraries(gimbal robot_logic)
 # Reuse the checked-in HAL/CMSIS package; board sources remain independent.
 add_subdirectory(cmake/stm32cubemx)
 target_link_libraries(gimbal stm32cubemx)

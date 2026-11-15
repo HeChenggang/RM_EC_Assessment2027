@@ -10,6 +10,10 @@ termination or ACKs.
   python tests/run_motor_tests.py --pid       # PID controller
   python tests/run_motor_tests.py --imu       # BMI088 IMU
   python tests/run_motor_tests.py --chassis   # Mecanum kinematics
+  python tests/run_motor_tests.py --logic     # Control/safety integration
+  python tests/run_motor_tests.py --link      # Board protocol
+  python tests/run_motor_tests.py --attitude  # Quaternion attitude
+  python tests/run_motor_tests.py --all       # Entire offline suite
 """
 import pathlib
 import subprocess
@@ -23,6 +27,9 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 FW = ROOT / "firmware/chassis"
 # flag -> (module source without extension, test file, instruction budget)
 CASES = {
+    "--logic": ("control/robot_control", "test_robot_logic.c", 30000000),
+    "--link": ("communication/board_link", "test_board_link.c", 10000000),
+    "--attitude": ("imu/attitude", "test_attitude.c", 100000000),
     "--pitch": ("motor/pitch_motor", "test_pitch_motor.c", 2000000),
     "--motor": ("motor/m3508_can", "test_m3508_can.c", 1000000),
     "--remote": ("remote/dr16", "test_dr16.c", 1000000),
@@ -30,8 +37,22 @@ CASES = {
     "--imu": ("imu/bmi088", "test_bmi088.c", 2000000),
     "--chassis": ("chassis/mecanum", "test_mecanum.c", 3000000),
 }
-SELECTED = next((flag for flag in CASES if flag in sys.argv), "--motor")
+if sys.argv[1:] == ["--all"]:
+    for flag in CASES:
+        subprocess.run([sys.executable, str(pathlib.Path(__file__).resolve()), flag], check=True)
+    raise SystemExit(0)
+if len(sys.argv) > 2 or (len(sys.argv) == 2 and sys.argv[1] not in CASES):
+    raise SystemExit("Choose one of: " + ", ".join(CASES) + ", --all")
+SELECTED = sys.argv[1] if len(sys.argv) == 2 else "--motor"
 MODULE, TEST, BUDGET = CASES[SELECTED]
+EXTRA = {
+    "--pitch": ["motor/dm4340_drv"],
+    "--logic": ["control/pid", "control/motion_math", "remote/command", "safety/safety_gate",
+                "chassis/mecanum", "chassis/chassis_control", "gimbal/gimbal_control",
+                "communication/board_link"],
+    "--link": ["remote/command", "control/motion_math"],
+    "--attitude": ["control/motion_math"],
+}
 
 
 def run(*args):
@@ -42,6 +63,7 @@ with tempfile.TemporaryDirectory(prefix="rm-driver-test-") as directory:
     elf = pathlib.Path(directory) / "test.elf"
     binary = pathlib.Path(directory) / "test.bin"
     includes = [ROOT / "modules/motor", ROOT / "modules/remote", ROOT / "modules/control",
+                ROOT / "modules/safety", ROOT / "modules/gimbal", ROOT / "modules/communication",
                 ROOT / "modules/imu", ROOT / "modules/chassis", ROOT / "config", FW / "Core/Inc",
                 FW / "Drivers/STM32F4xx_HAL_Driver/Inc",
                 FW / "Drivers/CMSIS/Include",
@@ -51,8 +73,8 @@ with tempfile.TemporaryDirectory(prefix="rm-driver-test-") as directory:
         "-DUSE_HAL_DRIVER", "-DSTM32F407xx", "-nostdlib",
         "-Wl,-Ttext=0x10000", "-Wl,-e,main",
         *[f"-I{p}" for p in includes], ROOT / f"modules/{MODULE}.c",
-        *([ROOT / "modules/motor/dm4340_drv.c"] if SELECTED == "--pitch" else []),
-        ROOT / f"tests/{TEST}", "-lc", "-lgcc", "-o", elf)
+        *[ROOT / f"modules/{source}.c" for source in EXTRA.get(SELECTED, [])],
+        ROOT / f"tests/{TEST}", "-lm", "-lc", "-lgcc", "-lnosys", "-o", elf)
     run("arm-none-eabi-objcopy", "-O", "binary", elf, binary)
     symbols = run("arm-none-eabi-nm", elf)
     entry = next(int(line.split()[0], 16) for line in symbols.splitlines()

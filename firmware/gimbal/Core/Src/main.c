@@ -29,6 +29,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "bmi088.h"
+#include "gimbal_board.h"
 #include "pitch_motor.h"
 /* USER CODE END Includes */
 
@@ -58,6 +59,14 @@ BMI088_GyroCalibration imu_calibration;
 volatile HAL_StatusTypeDef pitch_init_status = HAL_ERROR;
 volatile bool pitch_online = false;
 PitchMotor_Feedback pitch_feedback;
+volatile HAL_StatusTypeDef yaw_init_status = HAL_ERROR;
+volatile uint32_t yaw_rx_count;
+volatile uint32_t yaw_last_rx_ms;
+volatile uint16_t yaw_position_raw;
+volatile uint16_t yaw_velocity_raw;
+volatile uint16_t yaw_torque_raw;
+volatile uint8_t yaw_motor_state;
+volatile bool yaw_online;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -68,6 +77,28 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static HAL_StatusTypeDef StartYawFeedback(void)
+{
+  /* Bank 0 on CAN1. Keep the split used by PitchMotor on CAN2. */
+  const CAN_FilterTypeDef filter = {
+    .FilterBank = 0,
+    .FilterMode = CAN_FILTERMODE_IDMASK,
+    .FilterScale = CAN_FILTERSCALE_32BIT,
+    .FilterIdHigh = GIMBAL_YAW_RX_ID << 5,
+    .FilterMaskIdHigh = 0x7FFU << 5,
+    .FilterMaskIdLow = CAN_ID_EXT | CAN_RTR_REMOTE,
+    .FilterFIFOAssignment = CAN_FILTER_FIFO0,
+    .FilterActivation = ENABLE,
+    .SlaveStartFilterBank = 14
+  };
+  HAL_StatusTypeDef status = HAL_CAN_ConfigFilter(&hcan1, &filter);
+  if (status != HAL_OK) return status;
+  status = HAL_CAN_Start(&hcan1);
+  if (status != HAL_OK) return status;
+  status = HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
+  if (status != HAL_OK) (void)HAL_CAN_Stop(&hcan1);
+  return status;
+}
 
 /* USER CODE END 0 */
 
@@ -113,6 +144,7 @@ int main(void)
   /* Receive only at application level; no motor enable or control frames.
    * Confirm the physical motor's mode before calling any command API. */
   pitch_init_status = PitchMotor_Init(&hcan2, DM4340_MIT_MODE);
+  yaw_init_status = StartYawFeedback();
   imu_init_status = BMI088_Init(&hspi1);
   /* USER CODE END 2 */
 
@@ -125,6 +157,8 @@ int main(void)
     /* USER CODE BEGIN 3 */
     (void)PitchMotor_GetFeedback(&pitch_feedback);
     pitch_online = PitchMotor_IsOnline(100U);
+    yaw_online = yaw_rx_count != 0U &&
+        (uint32_t)(HAL_GetTick() - yaw_last_rx_ms) < 100U;
     if (imu_init_status == HAL_OK)
     {
       (void)BMI088_Service();
@@ -182,6 +216,26 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
+{
+  if (hcan != &hcan1) return;
+  while (HAL_CAN_GetRxFifoFillLevel(hcan, CAN_RX_FIFO0) != 0U)
+  {
+    CAN_RxHeaderTypeDef header;
+    uint8_t data[8];
+    if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &header, data) != HAL_OK) break;
+    if (header.IDE != CAN_ID_STD || header.RTR != CAN_RTR_DATA ||
+        header.StdId != GIMBAL_YAW_RX_ID || header.DLC != 8U ||
+        (data[0] & 0x0FU) != GIMBAL_YAW_TX_ID) continue;
+    yaw_motor_state = data[0] >> 4;
+    yaw_position_raw = (uint16_t)((data[1] << 8) | data[2]);
+    yaw_velocity_raw = (uint16_t)((data[3] << 4) | (data[4] >> 4));
+    yaw_torque_raw = (uint16_t)(((data[4] & 0x0FU) << 8) | data[5]);
+    yaw_last_rx_ms = HAL_GetTick();
+    ++yaw_rx_count;
+  }
+}
+
 void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *hcan)
 {
   PitchMotor_RxFifo1Callback(hcan);

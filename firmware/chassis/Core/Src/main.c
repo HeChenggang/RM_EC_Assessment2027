@@ -28,6 +28,10 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "command.h"
+#include "chassis_control.h"
+#include "chassis_setup.h"
+#include "safety_gate.h"
 #include "m3508_can.h"
 #include "dr16.h"
 #include "bmi088.h"
@@ -56,6 +60,37 @@ volatile HAL_StatusTypeDef motor_can_tx_status = HAL_OK;
 volatile HAL_StatusTypeDef remote_rx_status = HAL_OK;
 volatile bool remote_online = false;
 DR16_State remote_state;
+/* Debugger snapshot. arm is the operator's request, not motor enable. */
+volatile RobotCommand remote_command = {.estop = true};
+volatile bool chassis_configured;
+volatile SafetyState chassis_safety_state;
+volatile uint8_t chassis_wheel_fresh_mask;
+volatile ChassisOutput chassis_output;
+static ChassisControl chassis_control;
+static SafetyGate chassis_gate;
+volatile uint32_t rr_direct_request;
+volatile bool rr_direct_active;
+volatile int16_t rr_direct_peak_rpm;
+volatile uint32_t rr_direct_pulse_count;
+#if CHASSIS_RR_BENCH
+static PID_Controller rr_bench_pid;
+volatile float rr_bench_kp = 2.0f;
+volatile float rr_bench_ki = 0.0f;
+volatile float rr_bench_kd = 0.0f;
+volatile float rr_bench_measured_rpm;
+volatile bool rr_bench_gains_valid;
+#endif
+static const RemoteMap remote_map = {
+  .channel = {3, 2, 0, 1},
+  .direction = {1, -1, -1, 1},
+  .deadzone = 0.05f,
+  .separate_switch = DR16_SWITCH_UP,
+  .follow_switch = DR16_SWITCH_MIDDLE,
+  .spin_switch = DR16_SWITCH_DOWN,
+  .enable_switch = DR16_SWITCH_UP,
+  .disarm_switch = DR16_SWITCH_MIDDLE,
+  .stop_switch = DR16_SWITCH_DOWN
+};
 volatile HAL_StatusTypeDef imu_init_status = HAL_ERROR;
 volatile bool imu_online = false;
 BMI088_Sample imu_sample;
@@ -70,6 +105,176 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static bool InitChassisControl(void)
+{
+  ChassisConfig config = {
+    .geometry = MECANUM_DEFAULT_CONFIG,
+    .max_translation = CHASSIS_TRANSLATION_LIMIT_MPS,
+    .max_rotation = 1.0f, .spin_rate = 0.5f, .follow_kp = 1.0f,
+    .translation_accel = 0.5f, .rotation_accel = 1.0f, .max_dt = 0.025f
+  };
+  const int8_t direction[M3508_COUNT] = CHASSIS_WHEEL_DIRECTIONS;
+  config.geometry.max_motor_rpm = CHASSIS_MAX_ROTOR_RPM;
+  for (unsigned i = 0; i < M3508_COUNT; ++i)
+  {
+    config.geometry.motor_direction[i] = direction[i];
+    config.wheel_pid[i] = (PID_Config){
+      .kp = CHASSIS_SPEED_KP, .output_limit = CHASSIS_CURRENT_LIMIT_RAW,
+      .max_dt = config.max_dt
+    };
+  }
+  return CHASSIS_SPEED_KP > 0.0f && Chassis_Init(&chassis_control, &config);
+}
+
+static void ServiceRightRearPulse(bool fresh, float rpm)
+{
+  enum { pulse_ms = 300, pulse_current = -410 };
+  static uint32_t started_ms;
+  const uint32_t now = HAL_GetTick();
+  const bool debugger_attached = (CoreDebug->DHCSR & CoreDebug_DHCSR_C_DEBUGEN_Msk) != 0U;
+  const uint32_t request = rr_direct_request;
+  if (request != 0U)
+  {
+    rr_direct_request = 0U;
+    if (request == 1U && !rr_direct_active && fresh && debugger_attached &&
+        rpm >= -5.0f && rpm <= 5.0f)
+    {
+      started_ms = now;
+      rr_direct_peak_rpm = 0;
+      rr_direct_active = true;
+      ++rr_direct_pulse_count;
+    }
+  }
+  const bool was_active = rr_direct_active;
+  if (!fresh || !debugger_attached || request == 2U || now - started_ms >= pulse_ms)
+    rr_direct_active = false;
+  if (rr_direct_active)
+  {
+    const int16_t peak = rr_direct_peak_rpm;
+    const int16_t sample = (int16_t)rpm;
+    if ((int32_t)sample * sample > (int32_t)peak * peak)
+      rr_direct_peak_rpm = sample;
+  }
+
+  ChassisOutput output = {0};
+  if (rr_direct_active)
+    output.current[MECANUM_RR] = pulse_current;
+  if (was_active && !rr_direct_active)
+    (void)HAL_CAN_AbortTxRequest(&hcan2, CAN_TX_MAILBOX0 | CAN_TX_MAILBOX1 | CAN_TX_MAILBOX2);
+  motor_can_tx_status = M3508_CAN_SendCurrents(output.current);
+  if (rr_direct_active && motor_can_tx_status != HAL_OK)
+  {
+    rr_direct_active = false;
+    output.current[MECANUM_RR] = 0;
+    (void)HAL_CAN_AbortTxRequest(&hcan2, CAN_TX_MAILBOX0 | CAN_TX_MAILBOX1 | CAN_TX_MAILBOX2);
+    (void)M3508_CAN_SendCurrents(output.current);
+  }
+  chassis_output = output;
+  chassis_safety_state = rr_direct_active ? SAFETY_ACTIVE : SAFETY_DISARMED;
+  (void)HAL_IWDG_Refresh(&hiwdg);
+}
+
+static void ServiceChassisDrive(const RobotCommand *command, float dt)
+{
+  float rpm[M3508_COUNT] = {0};
+  bool fresh[M3508_COUNT] = {false};
+  uint8_t mask = 0;
+  for (unsigned i = 0; i < M3508_COUNT; ++i)
+  {
+    M3508_Feedback wheel;
+    if (M3508_CAN_GetFeedback((uint8_t)(i + 1), &wheel))
+    {
+      rpm[i] = wheel.speed_rpm;
+      fresh[i] = (uint32_t)(HAL_GetTick() - wheel.last_rx_ms) < 50U;
+      if (fresh[i]) mask |= (uint8_t)(1U << i);
+    }
+  }
+  chassis_wheel_fresh_mask = mask;
+  if (CHASSIS_RR_DIRECT_TEST)
+  {
+    ServiceRightRearPulse(fresh[MECANUM_RR], rpm[MECANUM_RR]);
+    return;
+  }
+#if CHASSIS_RR_BENCH
+  enum { rr = MECANUM_RR };
+  rr_bench_measured_rpm = rpm[rr];
+  /* Apply debugger edits only on a valid, neutral standby command. */
+  if (command->remote_valid && !command->arm && !command->estop &&
+      Command_Neutral(command, 0.02f))
+  {
+    const PID_Config gains = {
+      .kp = rr_bench_kp, .ki = rr_bench_ki, .kd = rr_bench_kd,
+      .output_limit = CHASSIS_RR_BENCH_CURRENT_RAW, .integral_limit = 100.0f,
+      .derivative_tau = 0.04f, .max_dt = 0.025f
+    };
+    rr_bench_gains_valid = PID_Init(&rr_bench_pid, &gains);
+  }
+#endif
+  /* The first drive stage is chassis-relative translation with no IMU or
+   * upper-board dependency. Reject other modes until yaw is available. */
+  SafetyInputs safety = {
+    .link_fresh = command->remote_valid,
+    .sensors_fresh = command->mode == MODE_SEPARATE,
+    .motors_healthy =
+#if CHASSIS_RR_BENCH
+      fresh[rr],
+#else
+      mask == (1U << M3508_COUNT) - 1U,
+#endif
+    .calibrated = true,
+    .hardware_configured =
+#if CHASSIS_RR_BENCH
+      rr_bench_gains_valid
+#else
+      chassis_configured
+#endif
+  };
+  const bool was_active = chassis_gate.state == SAFETY_ACTIVE;
+  const bool allowed = Safety_Step(&chassis_gate, command, &safety);
+#if CHASSIS_RR_BENCH
+  ChassisOutput output = {0};
+  if (allowed && command->forward != 0.0f)
+  {
+    const int8_t direction[M3508_COUNT] = CHASSIS_WHEEL_DIRECTIONS;
+    const float target = direction[rr] * command->forward * CHASSIS_RR_BENCH_RPM;
+    float current;
+    if (PID_Update(&rr_bench_pid, target, rpm[rr], dt, &current))
+    {
+      output.wheels.motor_rpm[rr] = target;
+      output.current[rr] = (int16_t)current;
+    }
+    else
+      chassis_gate = (SafetyGate){.state = SAFETY_FAULT};
+  }
+  else
+    PID_Reset(&rr_bench_pid);
+#else
+  ChassisOutput output;
+  if (!Chassis_Step(&chassis_control, command, 0.0f, rpm, fresh, allowed, dt, &output) && allowed)
+    chassis_gate = (SafetyGate){.state = SAFETY_FAULT};
+#endif
+
+  bool cancel_pending = was_active && chassis_gate.state != SAFETY_ACTIVE;
+#if CHASSIS_RR_BENCH
+  cancel_pending |= command->forward == 0.0f && chassis_output.current[rr] != 0;
+#endif
+  if (cancel_pending)
+    (void)HAL_CAN_AbortTxRequest(&hcan2, CAN_TX_MAILBOX0 | CAN_TX_MAILBOX1 | CAN_TX_MAILBOX2);
+  motor_can_tx_status = M3508_CAN_SendCurrents(output.current);
+  if (chassis_gate.state == SAFETY_ACTIVE && motor_can_tx_status != HAL_OK)
+  {
+    chassis_gate = (SafetyGate){.state = SAFETY_FAULT};
+    Chassis_Reset(&chassis_control);
+#if CHASSIS_RR_BENCH
+    PID_Reset(&rr_bench_pid);
+#endif
+    (void)HAL_CAN_AbortTxRequest(&hcan2, CAN_TX_MAILBOX0 | CAN_TX_MAILBOX1 | CAN_TX_MAILBOX2);
+    output = (ChassisOutput){0};
+    (void)M3508_CAN_SendCurrents(output.current);
+  }
+  chassis_output = output;
+  chassis_safety_state = chassis_gate.state;
+}
 
 /* USER CODE END 0 */
 
@@ -114,20 +319,26 @@ int main(void)
   MX_USART6_UART_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+  /* Let the IWDG count only while the core runs: halted at a breakpoint it
+   * would otherwise reset the board after ~802 ms, which makes single-step
+   * debugging impossible. Has no effect when no debugger is attached. */
+  __HAL_DBGMCU_FREEZE_IWDG();
   if (M3508_CAN_Init(&hcan2) != HAL_OK)
   {
     Error_Handler();
   }
-  const int16_t zero_currents[M3508_COUNT] = {0};
+  chassis_configured = InitChassisControl();
+  if (chassis_configured || CHASSIS_RR_BENCH || CHASSIS_RR_DIRECT_TEST)
+    __HAL_DBGMCU_UNFREEZE_IWDG();
   if (DR16_Init(&huart3) != HAL_OK)
   {
     Error_Handler();
   }
-  uint32_t last_motor_tx_ms = HAL_GetTick() - 10U;
   /* The IMU is not fatal at boot: a missing or miswired chip must not stop the
    * chassis from being tested, so the loop retries instead of Error_Handler. */
   imu_init_status = BMI088_Init(&hspi1);
   uint32_t last_imu_init_ms = HAL_GetTick();
+  uint32_t last_motor_tx_ms = last_imu_init_ms;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -139,7 +350,8 @@ int main(void)
     /* USER CODE BEGIN 3 */
     remote_rx_status = DR16_Service();
     const uint32_t now = HAL_GetTick();
-    if (imu_init_status != HAL_OK && (uint32_t)(now - last_imu_init_ms) >= 1000U)
+    if (!CHASSIS_RR_DIRECT_TEST && !CHASSIS_RR_BENCH && !chassis_configured && imu_init_status != HAL_OK &&
+        (uint32_t)(now - last_imu_init_ms) >= 1000U)
     {
       last_imu_init_ms = now;
       imu_init_status = BMI088_Init(&hspi1);
@@ -150,11 +362,24 @@ int main(void)
       imu_online = BMI088_GetSample(&imu_sample);
       BMI088_GetGyroCalibration(&imu_calibration);
     }
-    if ((uint32_t)(now - last_motor_tx_ms) >= 10U)
+    const uint32_t drive_now = HAL_GetTick();
+    const uint32_t elapsed = drive_now - last_motor_tx_ms;
+    if (elapsed >= 10U)
     {
-      last_motor_tx_ms = now;
+      last_motor_tx_ms = drive_now;
       remote_online = DR16_GetState(&remote_state);
-      motor_can_tx_status = M3508_CAN_SendCurrents(zero_currents);
+      const RemoteInput input = {
+        .channel = {remote_state.channel[0], remote_state.channel[1],
+                    remote_state.channel[2], remote_state.channel[3],
+                    remote_state.channel[4]},
+        .mode_switch = remote_state.s1,
+        .arm_switch = remote_state.s2,
+        .fresh = remote_online
+      };
+      RobotCommand command;
+      (void)Remote_Map(&remote_map, &input, &command);
+      remote_command = command;
+      ServiceChassisDrive(&command, (float)elapsed * 0.001f);
     }
   }
   /* USER CODE END 3 */

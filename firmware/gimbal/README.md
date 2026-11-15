@@ -46,15 +46,18 @@ cmake --build firmware/gimbal/build/Release
 
 主循环初始化并采集 BMI088，同时通过 Pitch 组件启动 CAN2 的 FIFO1 反馈接收。
 调试器可观察 `imu_init_status`、`imu_online`、`imu_sample`、`pitch_init_status`、
-`pitch_feedback` 和 `pitch_online`（100 ms 超时）。CAN1 尚未启动；不发电机指令、
+`pitch_feedback` 和 `pitch_online`（100 ms 超时）。CAN1 FIFO0 接收 Yaw 的标准反馈帧
+`0x13`，可观察 `yaw_init_status`、`yaw_online`、`yaw_rx_count` 和 `yaw_position_raw`。
+Yaw 原始字段尚未按实机量程换算。固件不发电机指令、
 不使能电机，也不启动加热。DM 电机可能需要请求才返回反馈，未收到反馈并不单独证明接线错误。
 没有沿用底盘的 M3508 零电流广播，以免错误作用于上板摩擦轮。
 
-**当前未实现板间协议，因此没有合法指令解包点，也不喂 IWDG；固件会约每 802 ms
+**当前 main 尚未接入板间收发，因此没有运行中的合法指令解包点，也不喂 IWDG；固件会约每 802 ms
 复位。** 这是外设配置阶段的固件，不是可运行的云台控制程序。
 IMU 零偏标定和姿态解算尚未接入；目前的复位周期也不足以完成默认 1000 样本标定。
-接入控制前需定义并实现板间命令帧、完整性检查、有效帧处喂狗、超时与急停处理，
-以及 Yaw 驱动与连续角度、Pitch 实测限位和零位、输出限幅及启动标定状态机。
+板间编解码、完整性检查、安全状态机、连续角度、Pitch 限位与闭环框架已在纯软件库实现，
+见 [离线控制说明](../../docs/offline-control.md)。实机接入仍需 CAN1 收发调度、合法帧喂狗、
+Yaw 驱动、Pitch 实测限位和零位、输出参数及启动标定任务。
 视觉协议和 RX 接收方式也需随后实现。不得将任意 CAN 帧当成有效命令喂狗。
 
 重新由 CubeMX 生成后需复核：HAL/CMSIS 共用路径、自定义顶层 CMake、
