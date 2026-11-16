@@ -189,7 +189,10 @@ void GimbalDrive_Step(GimbalDrive *s, const RobotCommand *cmd, bool link,
     float dt = elapsed * 0.001f;
     if (dt > s->config.control.max_dt) dt = s->config.control.max_dt;
     if (!Gimbal_Step(&s->control,&local_command,&f,true,dt,&s->output)) {
-        stop(s,GIMBAL_LIMIT,now); return;
+        GimbalDriveFault fault = GIMBAL_LIMIT;
+        if (s->control.spin_limit == GIMBAL_SPIN_TIME_LIMIT) fault = GIMBAL_SPIN_TIME;
+        if (s->control.spin_limit == GIMBAL_SPIN_TRAVEL_LIMIT) fault = GIMBAL_SPIN_TRAVEL;
+        stop(s,fault,now); return;
     }
     s->state = GIMBAL_ACTIVE;
     s->fault = GIMBAL_OK;

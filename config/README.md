@@ -34,8 +34,8 @@
 在 Ozone 观察 `remote_command`。其中 `arm` 是请求。
 
 底盘已接入左杆前后与横移的速度闭环。云台每 20 ms 通过板间 CAN 的 0x310..0x312
-回传关节角状态，底盘用其中的 Yaw 关节角进行平移坐标变换。小陀螺以 0.5 rad/s
-旋转，保留平移并用 IMU 保持云台世界航向，受累计时间和关节转角保护。见 [小陀螺模式](../docs/spin-mode.md)。
+回传关节角状态，底盘用其中的 Yaw 关节角进行平移坐标变换。小陀螺以 1.50 rad/s
+旋转，保留平移并用 IMU 保持云台世界航向；累计时间和关节转角停机保护已关闭。见 [小陀螺模式](../docs/spin-mode.md)。
 
 首次上车必须先标定云台零位：把云台摆到指向底盘正前方，读取
 `yaw_feedback.pos * GIMBAL_YAW_DIRECTION`，写入 `config/gimbal_setup.h` 的

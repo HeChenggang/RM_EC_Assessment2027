@@ -10,7 +10,7 @@ typedef enum {
 } GimbalDriveState;
 typedef enum { GIMBAL_OK, GIMBAL_CONFIG, GIMBAL_LINK, GIMBAL_FEEDBACK,
                GIMBAL_LIMIT, GIMBAL_TX, GIMBAL_ENABLE_TIMEOUT, GIMBAL_TIMING,
-               GIMBAL_STALL } GimbalDriveFault;
+               GIMBAL_STALL, GIMBAL_SPIN_TIME, GIMBAL_SPIN_TRAVEL } GimbalDriveFault;
 typedef struct {
     GimbalConfig control;
     float pitch_zero;

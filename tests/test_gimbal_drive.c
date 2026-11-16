@@ -357,5 +357,22 @@ int main(void)
     CHECK(s.state==GIMBAL_STOPPED && s.fault==GIMBAL_FEEDBACK);
     GimbalDrive_SetWorld(&s,1.0f,0,now); feedback(1); step(5,true);
     CHECK(s.state==GIMBAL_STOPPED); /* held ARM cannot recover */
+    const GimbalDriveFault spin_faults[] = {GIMBAL_SPIN_TIME, GIMBAL_SPIN_TRAVEL};
+    for (unsigned i=0; i<sizeof spin_faults/sizeof spin_faults[0]; ++i) {
+        init(); c=config(); c.spin_hardware_confirmed=true;
+        if (spin_faults[i]==GIMBAL_SPIN_TIME) c.control.spin_max_time=0.01f;
+        else c.control.spin_max_travel=0.05f;
+        CHECK(GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
+        arm(); cmd.mode=MODE_SPIN; feedback(1);
+        GimbalDrive_SetWorld(&s,1.0f,0,now);
+        step(5,true);
+        CHECK(s.state==GIMBAL_ACTIVE);
+        feedback(1);
+        if (spin_faults[i]==GIMBAL_SPIN_TRAVEL) y.pos=-0.1f;
+        step(5,true);
+        CHECK(s.state==GIMBAL_STOPPED && s.fault==spin_faults[i]);
+        cmd.arm=false; step(5,true);
+        CHECK(s.last_fault==spin_faults[i]);
+    }
     return 0;
 }

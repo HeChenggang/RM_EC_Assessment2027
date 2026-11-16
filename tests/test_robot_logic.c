@@ -236,6 +236,7 @@ int main(void)
     CHECK(!Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go) && go.torque[0]==0);
     fb.world_fresh = true;
     gc.spin_max_time = 0.05f;
+    gc.spin_max_travel = 0; /* Disabling travel must retain the time limit. */
     CHECK(Gimbal_Init(&gimbal,&gc));
     for (unsigned i=0; i<4; ++i) {
         cmd.mode = MODE_SPIN;
@@ -245,7 +246,9 @@ int main(void)
     }
     cmd.mode = MODE_SPIN;
     CHECK(!Gimbal_Step(&gimbal,&cmd,&fb,true,0.02f,&go));
+    CHECK(gimbal.spin_limit == GIMBAL_SPIN_TIME_LIMIT);
     gc = gimbal_config();
+    gc.spin_max_time = 0; /* Disabling time must retain the travel limit. */
     CHECK(Gimbal_Init(&gimbal,&gc));
     fb.joint[0] = 0;
     CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go));
@@ -255,6 +258,26 @@ int main(void)
     }
     fb.joint[0] = -2.01f;
     CHECK(!Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go) && go.torque[0]==0);
+    CHECK(gimbal.spin_limit == GIMBAL_SPIN_TRAVEL_LIMIT);
+    /* Unlimited spin survives the old 4 s / 2 rad limits and encoder wraps. */
+    gc.spin_max_time = gc.spin_max_travel = 0;
+    CHECK(Gimbal_Init(&gimbal,&gc));
+    fb.joint[0] = 0;
+    for (unsigned i=0; i<600; ++i) {
+        fb.joint[0] = Motion_Wrap(-0.02f*i);
+        CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go));
+    }
+    CHECK(gimbal.spin_elapsed > 4 && fabsf(gimbal.yaw_travel) > 10);
+    CHECK(gimbal.spin_limit == GIMBAL_SPIN_WITHIN_LIMITS);
+    cmd.mode = MODE_FOLLOW;
+    CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go));
+    fb.world_fresh = false;
+    CHECK(!Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go) && go.torque[0]==0);
+    gc.spin_max_time = -1;
+    CHECK(!Gimbal_Init(&gimbal,&gc));
+    gc.spin_max_time = 0; gc.spin_max_travel = -1;
+    CHECK(!Gimbal_Init(&gimbal,&gc));
+    gc = gimbal_config();
     cc.wheel_pid[0].output_limit = 20000;
     CHECK(!Chassis_Init(&robot.chassis, &cc));
     gc.pitch_min = gc.pitch_max;

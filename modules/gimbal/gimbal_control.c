@@ -10,6 +10,7 @@ void Gimbal_Reset(GimbalControl *s)
     s->yaw_input_direction = 0;
     s->yaw_world = false;
     s->spin_elapsed = s->yaw_last = s->yaw_travel = 0;
+    s->spin_limit = GIMBAL_SPIN_WITHIN_LIMITS;
     s->target[0] = s->target[1] = 0;
     PID_Reset(&s->rate[0]); PID_Reset(&s->rate[1]);
 }
@@ -23,8 +24,8 @@ bool Gimbal_Init(GimbalControl *s, const GimbalConfig *config)
         !isfinite(c.pitch_hold_kp) || c.pitch_hold_kp < 0 ||
         !isfinite(c.max_dt) || c.max_dt <= 0 || !isfinite(c.yaw_command_rate) ||
         c.yaw_command_rate <= 0 || !isfinite(c.pitch_command_rate) || c.pitch_command_rate <= 0 ||
-        !isfinite(c.spin_max_time) || c.spin_max_time <= 0 ||
-        !isfinite(c.spin_max_travel) || c.spin_max_travel <= 0)
+        !isfinite(c.spin_max_time) || c.spin_max_time < 0 ||
+        !isfinite(c.spin_max_travel) || c.spin_max_travel < 0)
         return false;
     for (unsigned i = 0; i < 2; ++i) {
         if ((c.space[i] != GIMBAL_JOINT && c.space[i] != GIMBAL_WORLD) ||
@@ -67,9 +68,16 @@ bool Gimbal_Step(GimbalControl *s, const RobotCommand *cmd,
     s->yaw_travel += Motion_Wrap(f->joint[0] - s->yaw_last);
     s->yaw_last = f->joint[0];
     if (spin) s->spin_elapsed += dt;
-    if (!isfinite(s->yaw_travel) || !isfinite(s->spin_elapsed) ||
-        (s->spin_elapsed > 0 && (s->spin_elapsed >= c->spin_max_time ||
-         fabsf(s->yaw_travel) >= c->spin_max_travel))) goto stop;
+    if (!isfinite(s->yaw_travel) || !isfinite(s->spin_elapsed)) goto stop;
+    if (s->spin_elapsed > 0) {
+        const bool timed_out = c->spin_max_time > 0 && s->spin_elapsed >= c->spin_max_time;
+        const bool travel_out = c->spin_max_travel > 0 && fabsf(s->yaw_travel) >= c->spin_max_travel;
+        if (timed_out || travel_out) {
+            Gimbal_Reset(s);
+            s->spin_limit = timed_out ? GIMBAL_SPIN_TIME_LIMIT : GIMBAL_SPIN_TRAVEL_LIMIT;
+            return false;
+        }
+    }
     if (s->yaw_world != yaw_world) {
         /* Capture the new frame's current heading without a target jump. */
         s->target[0] = Motion_Wrap(measured[0]);

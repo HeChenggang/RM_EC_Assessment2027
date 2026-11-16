@@ -29,14 +29,15 @@
 #define GIMBAL_PITCH_DIRECTION (-1)
 
 /* Separate retains its configured yaw frame. Follow and spin always use
- * the IMU world heading; spin also bounds duration and joint travel. */
+ * the IMU world heading. */
 #define GIMBAL_YAW_WORLD 0
 /* Manual yaw check with the matrix below: counterclockwise rotation viewed
  * from above gives positive yaw rate and increasing yaw. Static yaw drift
  * with nominal zero gyro bias was about +0.19 degrees over 10.1 s. */
 #define GIMBAL_IMU_MOUNT_CONFIRMED 1
-#define GIMBAL_SPIN_MAX_TIME_S 4.0f
-#define GIMBAL_SPIN_MAX_TRAVEL_RAD 2.0f
+/* Zero disables the corresponding spin-only stop condition. */
+#define GIMBAL_SPIN_MAX_TIME_S 0.0f
+#define GIMBAL_SPIN_MAX_TRAVEL_RAD 0.0f
 /* BMI088 sensor axes -> gimbal body axes (x forward, y left, z up).
  * Use nominal alignment for the current yaw commissioning. */
 #define GIMBAL_IMU_SENSOR_TO_BODY {{1.0f,0.0f,0.0f},{0.0f,1.0f,0.0f},{0.0f,0.0f,1.0f}}
