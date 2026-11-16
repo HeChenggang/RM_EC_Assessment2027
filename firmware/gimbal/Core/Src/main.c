@@ -172,7 +172,7 @@ static void ServiceStatusFrames(uint32_t now)
       .motors_healthy = motors_ok,
       .sensors_fresh = imu_online,
       .fault = gimbal_drive.fault != GIMBAL_OK || !board_link_online ||
-        (board_command.mode == MODE_SPIN &&
+        ((board_command.mode == MODE_SPIN || board_command.mode == MODE_FOLLOW) &&
          (!GIMBAL_IMU_MOUNT_CONFIRMED || !GIMBAL_YAW_ZERO_CONFIRMED ||
           !gimbal_drive.world_received ||
           (uint32_t)(now - gimbal_drive.world_ms) >= 30U))

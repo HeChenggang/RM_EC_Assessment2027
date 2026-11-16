@@ -21,17 +21,17 @@
  * Raising the barrel decreases raw angle; calibrated joint pitch is up-positive. */
 #define GIMBAL_PITCH_ZERO (-0.184f)
 #define GIMBAL_PITCH_UPPER_RAW (-1.143f)
-/* User positioned the desired lower endpoint; read via J-Link, 2026-11-16. */
-#define GIMBAL_PITCH_LOWER_RAW 0.0503824f
+/* Lower endpoint adjusted around the observed raw position of 0.059107 rad. */
+#define GIMBAL_PITCH_LOWER_RAW 0.060f
 #define GIMBAL_PITCH_MIN (GIMBAL_PITCH_ZERO - GIMBAL_PITCH_LOWER_RAW)
 #define GIMBAL_PITCH_MAX (GIMBAL_PITCH_ZERO - GIMBAL_PITCH_UPPER_RAW)
 #define GIMBAL_YAW_DIRECTION 1
 #define GIMBAL_PITCH_DIRECTION (-1)
 
-/* Separate/follow retain their configured yaw frame. MODE_SPIN always uses
- * the IMU world heading, with bounded duration and joint travel. */
+/* Separate retains its configured yaw frame. Follow and spin always use
+ * the IMU world heading; spin also bounds duration and joint travel. */
 #define GIMBAL_YAW_WORLD 0
-/* Confirm the measured sensor mounting before permitting spin. */
+/* Confirm the measured sensor mounting before permitting follow/spin. */
 #define GIMBAL_IMU_MOUNT_CONFIRMED 0
 #define GIMBAL_SPIN_MAX_TIME_S 4.0f
 #define GIMBAL_SPIN_MAX_TRAVEL_RAD 2.0f
@@ -52,8 +52,8 @@
  * gimbal centered), then set the value and GIMBAL_YAW_ZERO_CONFIRMED to 1.
  * Until confirmed the status frame reports calibrated=false and the chassis
  * refuses separate/follow, because a wrong zero skews translation and follow. */
-#define GIMBAL_YAW_ZERO 0.0f
-#define GIMBAL_YAW_ZERO_CONFIRMED 0
+#define GIMBAL_YAW_ZERO 0.873759449f
+#define GIMBAL_YAW_ZERO_CONFIRMED 1
 
 /* User reported that the 2 N m commissioning cap still cannot raise the
  * barrel and asked to remove the torque cap. The rate loop may now command up
@@ -66,6 +66,9 @@
 #define GIMBAL_PITCH_TORQUE_LIMIT DM4340_T_MAX
 #define GIMBAL_PITCH_SPEED_KP 2.0f
 #define GIMBAL_PITCH_SPEED_KI 2.0f
+/* Initial position stiffness, N m/rad; tune with the real loaded mechanism.
+ * 0.1 rad displacement adds 2 N m immediately, inside the total torque cap. */
+#define GIMBAL_PITCH_HOLD_KP 20.0f
 #define GIMBAL_PITCH_INTEGRAL_LIMIT (0.9f * DM4340_T_MAX)
 #define GIMBAL_PITCH_STALL_MS 1000U
 #define GIMBAL_PITCH_STALL_TRAVEL 0.005f
@@ -80,6 +83,7 @@ static inline GimbalDriveConfig GimbalSetup_Config(void)
     return (GimbalDriveConfig){
         .pitch_only=GIMBAL_PITCH_ONLY_TEST,
         .spin_hardware_confirmed=GIMBAL_IMU_MOUNT_CONFIRMED && GIMBAL_YAW_ZERO_CONFIRMED,
+        .follow_hardware_confirmed=GIMBAL_IMU_MOUNT_CONFIRMED && GIMBAL_YAW_ZERO_CONFIRMED,
         .hardware_confirmed=GIMBAL_PITCH_ONLY_TEST || (GIMBAL_HARDWARE_CONFIRMED &&
             GIMBAL_YAW_PMAX > 0 && GIMBAL_YAW_VMAX > 0 && GIMBAL_YAW_TMAX >= 0.3f),
         .pitch_zero=GIMBAL_PITCH_ZERO,
@@ -91,6 +95,7 @@ static inline GimbalDriveConfig GimbalSetup_Config(void)
             .spin_max_time=GIMBAL_SPIN_MAX_TIME_S, .spin_max_travel=GIMBAL_SPIN_MAX_TRAVEL_RAD,
             .yaw_command_rate=0.3f, .pitch_command_rate=0.2f,
             .angle_kp={3,3}, .max_dt=0.02f, .max_rate={0.3f,0.2f},
+            .pitch_hold_kp=GIMBAL_PITCH_HOLD_KP,
             .space={GIMBAL_YAW_WORLD ? GIMBAL_WORLD : GIMBAL_JOINT, GIMBAL_JOINT},
             .rate_pid={{.kp=GIMBAL_YAW_SPEED_KP,.output_limit=0.3f,.max_dt=0.02f},
                        {.kp=GIMBAL_PITCH_SPEED_KP,.ki=GIMBAL_PITCH_SPEED_KI,

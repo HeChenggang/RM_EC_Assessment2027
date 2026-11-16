@@ -123,6 +123,32 @@ int main(void)
     CHECK(s.state==GIMBAL_STOPPED && !s.stop_sent);
     old_disable=disables[0]; disable_result[0]=HAL_OK; step(20,true);
     CHECK(s.stop_sent && disables[0]>old_disable);
+    /* One pending Pitch frame must not consume a valid arm request. */
+    init(); step(20,true);
+    free_tx[1]=2; cmd.arm=true;
+    unsigned old_control=controls[1], old_enable=enables[1];
+    step(1,true); step(10,true);
+    CHECK(s.state==GIMBAL_WAIT_TX && controls[1]==old_control && enables[1]==old_enable);
+    free_tx[1]=3; step(1,true);
+    CHECK(s.state==GIMBAL_PREPARING && controls[1]==old_control+1 && torque[1]==0);
+    step(5,true); feedback(1); step(5,true);
+    CHECK(s.state==GIMBAL_ACTIVE && enables[1]==old_enable+1);
+    cmd.yaw=1; feedback(1); step(5,true);
+    CHECK(torque[0]>0);
+    /* Busy timeout, emergency stop, link loss and stick movement cancel the pending request. */
+    for (unsigned reason=0; reason<4; ++reason) {
+        init(); step(20,true);
+        free_tx[1]=2; cmd.arm=true; step(1,true);
+        CHECK(s.state==GIMBAL_WAIT_TX);
+        old_enable=enables[1];
+        cmd.estop=reason==1;
+        cmd.yaw=reason==3 ? 1 : 0;
+        step(reason==0 ? 20 : 1,reason!=2);
+        CHECK(s.state==GIMBAL_STOPPED && s.fault==(reason==0 ? GIMBAL_TX : GIMBAL_LINK));
+        CHECK(s.last_fault==s.fault && torque[0]==0 && torque[1]==0);
+        free_tx[1]=3; cmd.estop=false; cmd.yaw=0; step(5,true);
+        CHECK(s.state==GIMBAL_STOPPED && enables[1]==old_enable);
+    }
     init(); arm(); step(21,true);
     CHECK(s.state==GIMBAL_STOPPED && s.fault==GIMBAL_TIMING);
     init(); now=0xfffffff0U; s.last_step=now; s.last_stop=now-20;
@@ -132,7 +158,7 @@ int main(void)
     arm(); cmd.pitch=1; feedback(1); step(5,true); CHECK(torque[1]<0);
     /* Actual measured pitch calibration: zero and both endpoint directions. */
     c=GimbalSetup_Config();
-    CHECK(fabsf(c.control.pitch_min-(-0.2343824f))<0.00001f);
+    CHECK(fabsf(c.control.pitch_min-(-0.244f))<0.00001f);
     CHECK(fabsf(c.control.pitch_max-0.959f)<0.00001f);
     GimbalControl calibrated;
     CHECK(Gimbal_Init(&calibrated,&c.control));
@@ -204,6 +230,9 @@ int main(void)
         p.last_rx_ms=now; ++p.rx_count; step(5,true);
     }
     CHECK(s.state==GIMBAL_ACTIVE && !s.pitch_stall_tracking);
+    p.motor.pos=0.059107065f;
+    p.last_rx_ms=now; ++p.rx_count; step(5,true);
+    CHECK(s.state==GIMBAL_ACTIVE && s.fault==GIMBAL_OK);
     p.motor.pos=GIMBAL_PITCH_LOWER_RAW+0.00001f;
     p.last_rx_ms=now; ++p.rx_count; cmd.pitch=-1; step(5,true);
     CHECK(s.state==GIMBAL_ACTIVE && torque[1]<=0); /* no outward/down torque */
@@ -264,6 +293,52 @@ int main(void)
     CHECK(peak<-2.0f && peak>=-DM4340_T_MAX);
     c=GimbalSetup_Config(); c.pitch_stall_travel=NAN;
     CHECK(!GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
+    /* Neutral stick preserves the target under either external displacement.
+     * Real negative Pitch direction must produce restoring raw torque. */
+    for (int direction=-1; direction<=1; direction+=2) {
+        init(); c=GimbalSetup_Config();
+        CHECK(GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
+        cmd.arm=false; step(20,true);
+        cmd.arm=true; step(5,true); step(5,true);
+        feedback(1); p.motor.pos=GIMBAL_PITCH_ZERO; step(5,true);
+        CHECK(s.state==GIMBAL_ACTIVE);
+        const float target=s.output.target[1];
+        p.motor.pos=GIMBAL_PITCH_ZERO+direction*0.1f;
+        p.last_rx_ms=now; y.last_rx_ms=now; step(5,true);
+        CHECK(s.state==GIMBAL_ACTIVE && fabsf(s.output.target[1]-target)<1e-6f);
+        CHECK(direction*torque[1]<-2.0f); /* immediate restoring torque */
+        float first=fabsf(torque[1]);
+        for (unsigned i=0;i<100;++i) {
+            p.last_rx_ms=now; y.last_rx_ms=now; step(5,true);
+            CHECK(s.state==GIMBAL_ACTIVE && fabsf(s.output.target[1]-target)<1e-6f);
+        }
+        CHECK(fabsf(torque[1])>first); /* sustained load builds compensation */
+        p.motor.pos=GIMBAL_PITCH_ZERO;
+        p.last_rx_ms=now; y.last_rx_ms=now; step(5,true);
+        CHECK(direction*torque[1]<0); /* retain learned holding load at target */
+        cmd.estop=true; step(1,true);
+        CHECK(torque[1]==0 && s.control.rate[1].i==0);
+    }
+    c=config(); c.control.pitch_hold_kp=-1;
+    CHECK(!GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
+    c.control.pitch_hold_kp=NAN;
+    CHECK(!GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
+    /* Follow mode is unavailable without confirmed installation. */
+    init(); arm(); cmd.mode=MODE_FOLLOW; feedback(1);
+    GimbalDrive_SetWorld(&s,1.0f,0,now);
+    step(5,true);
+    CHECK(s.state==GIMBAL_STOPPED && s.fault==GIMBAL_CONFIG);
+    init(); c=config(); c.follow_hardware_confirmed=true;
+    CHECK(GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
+    arm(); cmd.mode=MODE_FOLLOW; feedback(1);
+    GimbalDrive_SetWorld(&s,1.0f,0,now);
+    step(5,true);
+    CHECK(s.state==GIMBAL_ACTIVE && fabsf(s.output.target[0]-1.0f)<0.001f);
+    feedback(1); step(15,true);
+    feedback(1); step(10,true);
+    CHECK(s.state==GIMBAL_STOPPED && s.fault==GIMBAL_FEEDBACK);
+    GimbalDrive_SetWorld(&s,1.0f,0,now); feedback(1); step(5,true);
+    CHECK(s.state==GIMBAL_STOPPED); /* held ARM cannot recover */
     /* Conventional spin is unavailable without confirmed installation. */
     init(); arm(); cmd.mode=MODE_SPIN; feedback(1);
     GimbalDrive_SetWorld(&s,1.0f,0,now);

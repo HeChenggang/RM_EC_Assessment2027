@@ -4,7 +4,10 @@
 #include "pitch_motor.h"
 #include "yaw_motor.h"
 
-typedef enum { GIMBAL_STOPPED, GIMBAL_PREPARING, GIMBAL_ENABLING, GIMBAL_ACTIVE } GimbalDriveState;
+typedef enum {
+    GIMBAL_STOPPED, GIMBAL_PREPARING, GIMBAL_ENABLING, GIMBAL_ACTIVE,
+    GIMBAL_WAIT_TX
+} GimbalDriveState;
 typedef enum { GIMBAL_OK, GIMBAL_CONFIG, GIMBAL_LINK, GIMBAL_FEEDBACK,
                GIMBAL_LIMIT, GIMBAL_TX, GIMBAL_ENABLE_TIMEOUT, GIMBAL_TIMING,
                GIMBAL_STALL } GimbalDriveFault;
@@ -14,6 +17,7 @@ typedef struct {
     int yaw_direction, pitch_direction;
     bool hardware_confirmed;
     bool spin_hardware_confirmed; /* IMU mounting and chassis-relative zero */
+    bool follow_hardware_confirmed; /* same calibration, independent mode gate */
     bool pitch_only; /* Commission Pitch without enabling/commanding Yaw. */
     uint32_t pitch_stall_ms;
     float pitch_stall_travel, pitch_stall_error; /* rad; both positive */
@@ -45,7 +49,7 @@ void GimbalDrive_Step(GimbalDrive *s, const RobotCommand *cmd, bool link_fresh,
                       const YawMotor_Feedback *yaw, const PitchMotor_Feedback *pitch,
                       uint32_t now);
 /* Feed the gimbal heading measured by the onboard attitude solution when the
- * yaw axis is configured as GIMBAL_WORLD or spin may be selected.
+ * yaw axis is configured as GIMBAL_WORLD or follow/spin may be selected.
  * Call every attitude update; the
  * sample expires after a short timeout and the drive then disarms. */
 void GimbalDrive_SetWorld(GimbalDrive *s, float yaw, float yaw_rate, uint32_t now);

@@ -20,6 +20,7 @@ bool Gimbal_Init(GimbalControl *s, const GimbalConfig *config)
     *s = (GimbalControl){0};
     if (!isfinite(c.pitch_min) || !isfinite(c.pitch_max) || c.pitch_min >= c.pitch_max ||
         c.pitch_min <= -MOTION_PI / 2 || c.pitch_max >= MOTION_PI / 2 ||
+        !isfinite(c.pitch_hold_kp) || c.pitch_hold_kp < 0 ||
         !isfinite(c.max_dt) || c.max_dt <= 0 || !isfinite(c.yaw_command_rate) ||
         c.yaw_command_rate <= 0 || !isfinite(c.pitch_command_rate) || c.pitch_command_rate <= 0 ||
         !isfinite(c.spin_max_time) || c.spin_max_time <= 0 ||
@@ -44,7 +45,7 @@ bool Gimbal_Step(GimbalControl *s, const RobotCommand *cmd,
         !isfinite(dt) || dt <= 0 || dt > s->config.max_dt) goto stop;
     const GimbalConfig *c = &s->config;
     const bool spin = cmd->mode == MODE_SPIN;
-    const bool yaw_world = spin || c->space[0] == GIMBAL_WORLD;
+    const bool yaw_world = spin || cmd->mode == MODE_FOLLOW || c->space[0] == GIMBAL_WORLD;
     if (!isfinite(f->joint[1]) || f->joint[1] < c->pitch_min || f->joint[1] > c->pitch_max) goto stop;
     float measured[2], rate[2];
     for (unsigned i = 0; i < 2; ++i) {
@@ -108,7 +109,12 @@ bool Gimbal_Step(GimbalControl *s, const RobotCommand *cmd,
         const float requested = c->angle_kp[i] * error;
         if (!isfinite(requested)) goto stop;
         result.rate[i] = Motion_Clamp(requested, c->max_rate[i]);
-        if (!PID_Update(&s->rate[i], result.rate[i], rate[i], dt, &result.torque[i])) goto stop;
+        /* Pitch stiffness reacts immediately to displacement, without the
+         * outer rate cap weakening it. Retain velocity damping and integral
+         * load compensation, with one shared torque/anti-windup limit. */
+        const float hold = i == 1 ? c->pitch_hold_kp * error : 0.0f;
+        if (!PID_UpdateWithFeedforward(&s->rate[i], result.rate[i], rate[i],
+                                      hold, dt, &result.torque[i])) goto stop;
     }
     if ((f->joint[1] >= c->pitch_max && result.torque[1] > 0) ||
         (f->joint[1] <= c->pitch_min && result.torque[1] < 0)) {

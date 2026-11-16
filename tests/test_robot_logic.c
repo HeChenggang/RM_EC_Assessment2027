@@ -181,6 +181,36 @@ int main(void)
     CHECK(NEAR(go.target[1], 0.21f, 1e-5f));
     fb.world_fresh = false;
     CHECK(!Gimbal_Step(&gimbal, &cmd, &fb, true, 0.01f, &go));
+    /* Follow holds world heading as the chassis closes the joint error.
+     * It has no spin timer, and preserves its heading when switching to spin. */
+    gc = gimbal_config();
+    CHECK(Gimbal_Init(&gimbal, &gc));
+    cmd = (RobotCommand){.remote_valid=true, .arm=true, .mode=MODE_FOLLOW};
+    fb = (GimbalFeedback){.joint={0.5f,0}, .world={1.2f,0},
+        .joint_fresh=true, .world_fresh=true};
+    CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go));
+    CHECK(NEAR(go.target[0],1.2f,1e-5f));
+    fb.joint[0] = 0;
+    for (unsigned i=0; i<600; ++i)
+        CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go));
+    CHECK(NEAR(go.torque[0],0,1e-5f) && gimbal.spin_elapsed==0);
+    fb.world[0] = 1.3f;
+    CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go) && go.torque[0]<0);
+    cmd.mode = MODE_SPIN;
+    CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go));
+    CHECK(NEAR(go.target[0],1.2f,1e-5f));
+    cmd.mode = MODE_FOLLOW;
+    CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go));
+    CHECK(NEAR(go.target[0],1.2f,1e-5f));
+    cmd.mode = MODE_SEPARATE;
+    CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go));
+    CHECK(NEAR(go.target[0],fb.joint[0],1e-5f));
+    cmd.mode = MODE_FOLLOW;
+    CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go));
+    CHECK(NEAR(go.target[0],fb.world[0],1e-5f));
+    fb.world_fresh = false;
+    CHECK(!Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go) && go.torque[0]==0);
+
     /* Spin captures world heading, rejects joint-only feedback, and switches
      * back to a joint target without interpreting a world angle as a joint. */
     gc = gimbal_config();

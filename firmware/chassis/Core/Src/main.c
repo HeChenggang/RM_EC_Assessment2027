@@ -202,7 +202,7 @@ static bool InitChassisControl(void)
     .geometry = MECANUM_DEFAULT_CONFIG,
     .max_translation = CHASSIS_TRANSLATION_LIMIT_MPS,
     .max_rotation = CHASSIS_MAX_ROTATION_RAD_S,
-    .spin_rate = CHASSIS_SPIN_RATE_RAD_S, .follow_kp = 1.0f,
+    .spin_rate = CHASSIS_SPIN_RATE_RAD_S, .follow_kp = CHASSIS_FOLLOW_KP,
     .translation_accel = CHASSIS_TRANSLATION_ACCEL_MPS2,
     .rotation_accel = 1.0f, .max_dt = 0.025f
   };
@@ -315,12 +315,11 @@ static void ServiceChassisDrive(const RobotCommand *command, float dt)
   float relative_yaw = 0.0f;
   const bool yaw_ok = status_ok && BoardYaw(&status, &relative_yaw);
   board_relative_yaw = yaw_ok ? relative_yaw : 0.0f;
-  const bool follow_ready = command->mode != MODE_FOLLOW || CHASSIS_FOLLOW_IMU_READY;
   SafetyInputs safety = {
     .link_fresh = command->remote_valid,
     /* Every mode needs calibrated relative yaw for gimbal-frame translation.
-     * The upper board reports a fault if spin world feedback is unavailable. */
-    .sensors_fresh = status_ok && yaw_ok && follow_ready,
+     * The upper board reports a fault if follow/spin world feedback is unavailable. */
+    .sensors_fresh = status_ok && yaw_ok,
     .motors_healthy =
 #if CHASSIS_RR_BENCH
       fresh[rr],

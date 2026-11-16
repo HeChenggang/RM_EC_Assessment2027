@@ -6,6 +6,7 @@
 #define ALL_TX (CAN_TX_MAILBOX0 | CAN_TX_MAILBOX1 | CAN_TX_MAILBOX2)
 #define FEEDBACK_MS 100U
 #define RETRY_MS 20U
+#define ARM_TX_WAIT_MS 20U
 #define ENABLE_MS 300U
 #define WORLD_MS 30U
 
@@ -95,33 +96,45 @@ void GimbalDrive_Step(GimbalDrive *s, const RobotCommand *cmd, bool link,
         s->last_step = now;
         return;
     }
-    if (cmd->mode == MODE_SPIN &&
-        (!s->config.spin_hardware_confirmed || s->config.pitch_only)) {
+    if ((cmd->mode == MODE_SPIN &&
+         (!s->config.spin_hardware_confirmed || s->config.pitch_only)) ||
+        (cmd->mode == MODE_FOLLOW &&
+         (!s->config.follow_hardware_confirmed || s->config.pitch_only))) {
         stop(s,GIMBAL_CONFIG,now); return;
     }
-    if ((cmd->mode == MODE_SPIN || s->config.control.space[0] == GIMBAL_WORLD) &&
+    if ((cmd->mode == MODE_SPIN || cmd->mode == MODE_FOLLOW ||
+         s->config.control.space[0] == GIMBAL_WORLD) &&
         (!s->world_received || (uint32_t)(now-s->world_ms) >= WORLD_MS)) {
         /* A world-referenced yaw axis is only as good as its attitude sample. */
         stop(s,GIMBAL_FEEDBACK,now); return;
     }
     if (s->state == GIMBAL_STOPPED) {
-        if (!s->ready || !Command_Neutral(cmd,0.02f) || !s->stop_sent || !empty(s)) {
+        if (!s->ready || !Command_Neutral(cmd,0.02f)) {
             s->ready = false;
             stop(s,s->fault,now); return;
         }
         s->ready = false;
-        s->state = GIMBAL_PREPARING;
         s->last_fault = GIMBAL_OK;
+        if (!s->stop_sent) { stop(s,GIMBAL_TX,now); return; }
+        s->state = GIMBAL_WAIT_TX;
         s->phase_started = now;
+    }
+    if (s->state != GIMBAL_ACTIVE && !Command_Neutral(cmd,0.02f)) {
+        stop(s,GIMBAL_LINK,now); return;
+    }
+    if (s->state == GIMBAL_WAIT_TX) {
+        /* A queued disable can still be on the bus when the arm request arrives. */
+        if ((uint32_t)(now-s->phase_started) >= ARM_TX_WAIT_MS) {
+            stop(s,GIMBAL_TX,now); return;
+        }
+        if (!empty(s)) return;
+        s->state = GIMBAL_PREPARING;
         s->last_step = now;
         /* Preload zero MIT torque while disabled. No retained old target. */
         s->tx[0] = s->config.pitch_only ? HAL_OK : YawMotor_SendMIT(0,0,0,0,0);
         s->tx[1] = PitchMotor_SendMIT(0,0,0,0,0);
         if (s->tx[0] != HAL_OK || s->tx[1] != HAL_OK) stop(s,GIMBAL_TX,now);
         return;
-    }
-    if (s->state != GIMBAL_ACTIVE && !Command_Neutral(cmd,0.02f)) {
-        stop(s,GIMBAL_LINK,now); return;
     }
     if (s->state != GIMBAL_ACTIVE && (uint32_t)(now-s->phase_started) >= ENABLE_MS) {
         stop(s,GIMBAL_ENABLE_TIMEOUT,now); return;

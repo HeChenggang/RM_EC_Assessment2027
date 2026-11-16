@@ -69,6 +69,20 @@ int main(void)
     c.output_limit = 10; c.ki = NAN;
     CHECK(!PID_Init(&pid, &c));
 
+    /* Added holding torque must share saturation and prevent windup. */
+    c = (PID_Config){.kp=2,.ki=1,.output_limit=10,.integral_limit=10,.max_dt=1};
+    CHECK(PID_Init(&pid, &c));
+    for (unsigned i=0; i<50; ++i)
+        CHECK(PID_UpdateWithFeedforward(&pid, 1, 0, 9, 0.1f, &out));
+    CHECK(out==10 && pid.i==0);
+    CHECK(PID_UpdateWithFeedforward(&pid, -1, 0, -9, 0.1f, &out));
+    CHECK(out==-10 && pid.i==0);
+    CHECK(PID_UpdateWithFeedforward(&pid, 1, 0, 0, 1, &out) && pid.i==1);
+    CHECK(PID_UpdateWithFeedforward(&pid, -1, 0, 20, 0.1f, &out));
+    CHECK(out==10 && NEAR(pid.i,0.9f)); /* allow unwind while saturated */
+    CHECK(!PID_UpdateWithFeedforward(&pid, 0, 0, NAN, 0.1f, &out));
+    CHECK(out==0 && pid.i==0);
+
     /* A simple first-order simulated plant: PI should track a unit step. */
     c = (PID_Config){.kp = 2, .ki = 4, .output_limit = 2, .integral_limit = 2,
         .max_dt = 0.02f};

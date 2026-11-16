@@ -42,10 +42,16 @@ bool PID_Init(PID_Controller *pid, const PID_Config *config)
 bool PID_Update(PID_Controller *pid, float target, float measurement,
                 float dt_seconds, float *output)
 {
+    return PID_UpdateWithFeedforward(pid, target, measurement, 0.0f, dt_seconds, output);
+}
+
+bool PID_UpdateWithFeedforward(PID_Controller *pid, float target, float measurement,
+                               float feedforward, float dt_seconds, float *output)
+{
     if (output != NULL) *output = 0.0f;
     if (pid == NULL) return false;
     if (output == NULL || !pid->configured || !config_valid(&pid->config) ||
-        !isfinite(target) || !isfinite(measurement) || !isfinite(dt_seconds) ||
+        !isfinite(target) || !isfinite(measurement) || !isfinite(feedforward) || !isfinite(dt_seconds) ||
         dt_seconds <= 0.0f || dt_seconds > pid->config.max_dt) goto invalid;
 
     const PID_Config *c = &pid->config;
@@ -66,14 +72,14 @@ bool PID_Update(PID_Controller *pid, float target, float measurement,
         derivative = (1.0f - alpha) * pid->filtered_derivative + alpha * raw;
     }
     const float d = c->kd * derivative;
-    const float trial = p + integral + d;
+    const float trial = p + integral + d + feedforward;
     if (!isfinite(derivative) || !isfinite(d) || !isfinite(trial)) goto invalid;
 
     /* Reject only increments that push further into saturation; allow unwind. */
     const float delta_i = integral - pid->i;
     if ((trial > c->output_limit && delta_i > 0.0f) ||
         (trial < -c->output_limit && delta_i < 0.0f)) integral = pid->i;
-    const float sum = p + integral + d;
+    const float sum = p + integral + d + feedforward;
     if (!isfinite(sum)) goto invalid;
     pid->p = p;
     pid->i = integral;

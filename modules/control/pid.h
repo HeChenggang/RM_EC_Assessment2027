@@ -38,6 +38,10 @@ void PID_Reset(PID_Controller *pid);
  * Caller must enforce remote validity, motor feedback freshness and arming. */
 bool PID_Update(PID_Controller *pid, float target, float measurement,
                 float dt_seconds, float *output);
+/* Additional output contribution participates in BOTH saturation and
+ * anti-windup. output includes it; diagnostic p/i/d remain PID-only. */
+bool PID_UpdateWithFeedforward(PID_Controller *pid, float target, float measurement,
+                               float feedforward, float dt_seconds, float *output);
 
 #ifdef __cplusplus
 }

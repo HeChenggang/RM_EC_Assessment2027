@@ -55,7 +55,7 @@
 标定完成；零偏未完成、姿态解算失败或世界角超过 30 ms 未更新时，云台会以
 `GIMBAL_FEEDBACK` 退出使能。无磁力计，世界 yaw 会缓慢漂移，长时间运行需重新标定。
 首次开启前必须核对 `GIMBAL_IMU_SENSOR_TO_BODY` 安装矩阵与实机安装方向一致。
-跟随档还受 `CHASSIS_FOLLOW_IMU_READY=0` 限制，世界系调通后再置 1。
+跟随档强制使用世界航向；上板确认 IMU 安装与 Yaw 零位且姿态反馈新鲜后才允许运行，见 [跟随模式](../docs/follow-mode.md)。
 状态帧丢失超过 100 ms、CRC/序号错误，或 yaw 单周期跳变超过 0.3 rad 时，
 底盘会退出使能，需要重新回中并使能。
 在 `firmware/chassis/Core/Inc/chassis_setup.h` 填写实测轮向（左前、左后、右后、右前）、

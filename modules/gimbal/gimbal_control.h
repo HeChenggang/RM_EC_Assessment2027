@@ -8,6 +8,7 @@ typedef struct {
     float yaw_command_rate, pitch_command_rate, angle_kp[2], max_dt;
     PID_Config rate_pid[2]; /* output is torque, configured per actual motor */
     float max_rate[2];
+    float pitch_hold_kp; /* N m/rad, direct position stiffness; zero disables */
     GimbalSpace space[2]; /* yaw,pitch; allows joint/world/mixed control */
     float spin_max_time, spin_max_travel; /* seconds/rad per armed session */
 } GimbalConfig;
@@ -31,7 +32,7 @@ void Gimbal_Reset(GimbalControl *control);
 /* Aligned yaw/pitch axis model; world angles/rates must be supplied by the
  * installation/kinematic adapter. Body gyro Y/Z alone are NOT Euler rates.
  * Limits are applied in JOINT space even when the pitch target is WORLD.
- * MODE_SPIN always requires world yaw feedback, regardless of space[0].
+ * MODE_FOLLOW and MODE_SPIN always require world yaw feedback, regardless of space[0].
  * Spin time and net joint travel are bounded per armed session; callers must
  * latch a failed step and require disarm before restarting.
  * At an exact limit, suppress outward torque; outside limits stop both axes. */
