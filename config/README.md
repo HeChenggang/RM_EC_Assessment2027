@@ -33,12 +33,24 @@
 摇杆死区为 5%，右杆向左和向前分别映射为归一化 yaw、pitch 输入的正方向。
 在 Ozone 观察 `remote_command`。其中 `arm` 是请求。
 
-底盘已接入左杆前后与横移的速度闭环。首阶段使用底盘坐标系，左拨杆置上。
-左拨杆中、下两档暂时停机，等待可用的云台相对角反馈再接入。
+底盘已接入左杆前后与横移的速度闭环。云台每 20 ms 通过板间 CAN 的 0x310..0x312
+回传关节角状态，底盘用其中的 yaw 关节角作为云台相对底盘的偏角：分离与跟随按该角度
+做坐标变换，小陀螺以 0.5 rad/s 旋转并保留平移（整机随转）。
+
+首次上车必须先标定云台零位：把云台摆到指向底盘正前方，读取
+`yaw_feedback.pos * GIMBAL_YAW_DIRECTION`，写入 `config/gimbal_setup.h` 的
+`GIMBAL_YAW_ZERO`，再把 `GIMBAL_YAW_ZERO_CONFIRMED` 置 1。未确认时状态帧
+`calibrated=false`，底盘在分离/跟随会进入 FAULT；小陀螺不依赖 yaw，可先单独验证。
+
+跟随模式还要求云台 yaw 做世界系稳定，否则关节伺服会把相对角锁住，底盘会一直转到
+旋转上限。该功能完成前 `CHASSIS_FOLLOW_IMU_READY=0` 会让跟随档保持停机。
+状态帧丢失超过 100 ms、CRC/序号错误，或 yaw 单周期跳变超过 0.3 rad 时，
+底盘会退出使能，需要重新回中并使能。
 在 `firmware/chassis/Core/Inc/chassis_setup.h` 填写实测轮向（左前、左后、右后、右前）、
 转子最高转速、原始电流上限和速度环 Kp。目前启用四轮低速调试配置：
 转子上限 1600 rpm、原始电流上限 ±2000、Kp=4、Ki=3、Kd=0，积分原始输出限幅 ±650。平移指令上限 0.60 m/s，起步加速度 1.20 m/s²，满杆目标约 0.5 秒达到上限，回中立即给出零平移目标。两种右后轮专用测试模式均关闭。
 这些是初始调试参数，尚未完成四轮运动验证与负载调参。
 四轮反馈都新鲜时，右拨杆先置中并让摇杆回中，再拨上使能。右拨杆置下、遥控掉线、
 任一轮反馈过期或 CAN 发送失败会退出使能。Ozone 可观察 `chassis_configured`、
-`chassis_wheel_fresh_mask`、`chassis_safety_state` 和 `chassis_output`。
+`chassis_wheel_fresh_mask`、`chassis_safety_state`、`chassis_output`、
+`board_status_count` 和 `board_relative_yaw`；上板可观察 `status_sent_count`。

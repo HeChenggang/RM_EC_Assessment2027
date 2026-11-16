@@ -19,4 +19,12 @@
 /* Ozone-triggered open-loop pulse. Set to 0 to restore remote PID tuning. */
 #define CHASSIS_RR_DIRECT_TEST 0
 
+/* Board-link relative yaw (gimbal status 0x310..0x312). */
+/* No physical yaw move can exceed this between two 20 ms status frames. */
+#define CHASSIS_YAW_JUMP_RAD 0.3f
+/* Follow needs a world-stabilized gimbal yaw. With joint-only yaw control the
+ * chassis rotates, the gimbal follows, the joint angle never shrinks and the
+ * loop winds up at max_rotation. Keep 0 until the world-frame work is verified. */
+#define CHASSIS_FOLLOW_IMU_READY 0
+
 #endif

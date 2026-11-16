@@ -69,7 +69,9 @@ int main(void) {
  for(unsigned i=0;i<8;++i) CHECK(sent_data[i]==0);
  CHECK(YawMotor_SendMIT(NAN,0,0,0,0)==HAL_ERROR);
  CHECK(YawMotor_SendMIT(r.pmax,21,500,5,7.5f)==HAL_ERROR);
- free_mailboxes=2; CHECK(YawMotor_Disable()==HAL_BUSY); free_mailboxes=3;
+ /* One free mailbox is enough for one frame; only a full queue is BUSY. */
+ free_mailboxes=2; CHECK(YawMotor_Disable()==HAL_OK);
+ free_mailboxes=0; CHECK(YawMotor_Disable()==HAL_BUSY); free_mailboxes=3;
  CAN_RxHeaderTypeDef h={.StdId=0x13,.DLC=8,.IDE=CAN_ID_STD,.RTR=CAN_RTR_DATA};
  uint8_t d[8]={0x13,255,255,0,15,255,42,53};
  tick=0xfffffff0;

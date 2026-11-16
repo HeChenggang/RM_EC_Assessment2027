@@ -34,6 +34,9 @@
 #include "yaw_motor.h"
 #include "gimbal_setup.h"
 #include "board_link.h"
+#include "board_link_setup.h"
+#include "motion_math.h"
+#include <math.h>
 #include <string.h>
 /* USER CODE END Includes */
 
@@ -81,6 +84,13 @@ volatile bool board_link_online;
 volatile uint32_t board_command_count;
 static volatile uint32_t watchdog_generation;
 static uint32_t watchdog_consumed;
+/* Status is split over three frames and sent one per loop pass so the 200 Hz
+ * yaw torque frame always has a free CAN1 mailbox. */
+static LinkFrame status_frames[3];
+static uint8_t status_frames_left;
+static uint32_t status_batch_ms;
+static uint8_t status_sequence;
+volatile uint32_t status_sent_count;
 GimbalDrive gimbal_drive;
 volatile bool gimbal_configured;
 /* USER CODE END PV */
@@ -125,6 +135,52 @@ static HAL_StatusTypeDef StartYawFeedback(void)
   status = HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
   if (status != HAL_OK) (void)HAL_CAN_Stop(&hcan1);
   return status;
+}
+
+/* Publish the measured joint angles to the chassis board. One frame per pass;
+ * a batch is dropped and retried with a new sequence if the bus stays busy. */
+static void ServiceStatusFrames(uint32_t now)
+{
+  if (status_frames_left == 0U) {
+    if ((uint32_t)(now - status_batch_ms) < BOARD_LINK_STATUS_PERIOD_MS) return;
+    const bool motors_ok = yaw_online && pitch_online && yaw_feedback.scaled;
+    float yaw = 0.0f;
+    if (isfinite(yaw_feedback.pos))
+      yaw = Motion_Wrap(yaw_feedback.pos * GIMBAL_YAW_DIRECTION - GIMBAL_YAW_ZERO);
+    if (!isfinite(yaw)) yaw = 0.0f;
+    float pitch = 0.0f;
+    if (isfinite(pitch_feedback.motor.pos))
+      pitch = (pitch_feedback.motor.pos - GIMBAL_PITCH_ZERO) * GIMBAL_PITCH_DIRECTION;
+    if (!isfinite(pitch)) pitch = 0.0f;
+    if (pitch < GIMBAL_PITCH_MIN) pitch = GIMBAL_PITCH_MIN;
+    if (pitch > GIMBAL_PITCH_MAX) pitch = GIMBAL_PITCH_MAX;
+    const LinkStatus status = {
+      .yaw_joint = yaw,
+      .pitch_joint = pitch,
+      .calibrated = motors_ok && GIMBAL_YAW_ZERO_CONFIRMED,
+      .motors_healthy = motors_ok,
+      .sensors_fresh = imu_online,
+      .fault = gimbal_drive.fault != GIMBAL_OK || !board_link_online
+    };
+    status_batch_ms = now;
+    if (!Link_EncodeStatus(&status, status_sequence++, status_frames)) return;
+    status_frames_left = 3;
+  }
+  /* Keep one mailbox for the yaw torque frame. */
+  if (HAL_CAN_GetTxMailboxesFreeLevel(&hcan1) < 2U) {
+    if ((uint32_t)(now - status_batch_ms) >= 100U) status_frames_left = 0;
+    return;
+  }
+  const LinkFrame *frame = &status_frames[3U - status_frames_left];
+  CAN_TxHeaderTypeDef header = {.StdId = frame->id, .IDE = CAN_ID_STD,
+                                .RTR = CAN_RTR_DATA, .DLC = 8};
+  uint32_t mailbox;
+  if (HAL_CAN_AddTxMessage(&hcan1, &header, frame->data, &mailbox) != HAL_OK) {
+    status_frames_left = 0;
+    return;
+  }
+  --status_frames_left;
+  ++status_sent_count;
 }
 
 /* USER CODE END 0 */
@@ -212,6 +268,7 @@ int main(void)
     yaw_online = YawMotor_IsOnline(100U);
     GimbalDrive_Step(&gimbal_drive, &board_command, board_link_online,
                      &yaw_feedback, &pitch_feedback, HAL_GetTick());
+    ServiceStatusFrames(HAL_GetTick());
     /* Low-rate read-only feedback requests after stop/drive processing.
      * Do not compete with enable/torque traffic while armed. */
     if (board_link_online && board_command.remote_valid && !board_command.arm &&

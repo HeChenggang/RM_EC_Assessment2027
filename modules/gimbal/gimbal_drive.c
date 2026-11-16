@@ -32,8 +32,11 @@ bool GimbalDrive_Init(GimbalDrive *s, const GimbalDriveConfig *c,
 
 static bool empty(GimbalDrive *s)
 {
+    /* CAN1 also carries the board-link status frames, so only one free
+     * mailbox is needed for a single yaw frame. CAN2 still belongs to the
+     * pitch sender alone. */
     return s->bus[0] && s->bus[1] &&
-        (s->config.pitch_only || HAL_CAN_GetTxMailboxesFreeLevel(s->bus[0]) == 3) &&
+        (s->config.pitch_only || HAL_CAN_GetTxMailboxesFreeLevel(s->bus[0]) >= 1) &&
         HAL_CAN_GetTxMailboxesFreeLevel(s->bus[1]) == 3;
 }
 

@@ -54,7 +54,10 @@ bool YawMotor_IsOnline(uint32_t timeout_ms)
 static HAL_StatusTypeDef send_id(uint16_t id, const uint8_t data[8])
 {
     if (!bus || HAL_CAN_GetState(bus) != HAL_CAN_STATE_LISTENING) return HAL_ERROR;
-    if (HAL_CAN_GetTxMailboxesFreeLevel(bus) != 3) return HAL_BUSY;
+    /* This call queues exactly one frame, and CAN1 is shared with the
+     * board-link status sender. Requiring all three mailboxes free would make
+     * a queued status frame look like a transmit failure. */
+    if (HAL_CAN_GetTxMailboxesFreeLevel(bus) == 0) return HAL_BUSY;
     CAN_TxHeaderTypeDef h = {.StdId = id, .IDE = CAN_ID_STD, .RTR = CAN_RTR_DATA, .DLC = 8};
     uint32_t mailbox;
     return HAL_CAN_AddTxMessage(bus, &h, data, &mailbox);
@@ -143,7 +146,7 @@ void YawMotor_ParamService(bool disarmed)
         if (param_index==4) { params.finished=true; goto done; }
     }
     if (HAL_CAN_GetState(bus)!=HAL_CAN_STATE_LISTENING ||
-        HAL_CAN_GetTxMailboxesFreeLevel(bus)!=3) goto done;
+        HAL_CAN_GetTxMailboxesFreeLevel(bus)==0) goto done;
     CAN_TxHeaderTypeDef h={.StdId=0x7ff,.IDE=CAN_ID_STD,.RTR=CAN_RTR_DATA,.DLC=8};
     uint8_t d[8]={GIMBAL_YAW_TX_ID,0,0x33,param_rid[param_index],0,0,0,0};
     uint32_t mailbox;

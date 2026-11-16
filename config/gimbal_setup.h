@@ -25,6 +25,14 @@
 #define GIMBAL_YAW_DIRECTION 1
 #define GIMBAL_PITCH_DIRECTION (-1)
 
+/* Measured yaw motor position with the gimbal pointing along chassis forward.
+ * Measure it on hardware (read yaw_feedback.pos * GIMBAL_YAW_DIRECTION with the
+ * gimbal centered), then set the value and GIMBAL_YAW_ZERO_CONFIRMED to 1.
+ * Until confirmed the status frame reports calibrated=false and the chassis
+ * refuses separate/follow, because a wrong zero skews translation and follow. */
+#define GIMBAL_YAW_ZERO 0.0f
+#define GIMBAL_YAW_ZERO_CONFIRMED 0
+
 /* Next commissioning step after measured 1 N m stall. Not hardware-validated. */
 #define GIMBAL_PITCH_TORQUE_LIMIT 2.0f
 #define GIMBAL_PITCH_SPEED_KP 2.0f

@@ -29,6 +29,8 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "board_link.h"
+#include "board_link_setup.h"
+#include "motion_math.h"
 #include "command.h"
 #include "chassis_control.h"
 #include "chassis_setup.h"
@@ -36,6 +38,8 @@
 #include "m3508_can.h"
 #include "dr16.h"
 #include "bmi088.h"
+#include <math.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -58,6 +62,13 @@
 /* USER CODE BEGIN PV */
 volatile HAL_StatusTypeDef board_link_tx_status = HAL_ERROR;
 static uint8_t board_link_sequence;
+/* Gimbal status receiver (0x310..0x312). Last value is visible in the debugger. */
+static LinkReceiver status_rx;
+volatile bool board_link_rx_configured;
+volatile uint32_t board_status_count;
+volatile float board_relative_yaw;
+static float board_yaw_last;
+static bool board_yaw_initialized;
 /* Visible in the debugger. HAL_OK only means the frame was queued. */
 volatile HAL_StatusTypeDef motor_can_tx_status = HAL_OK;
 volatile HAL_StatusTypeDef remote_rx_status = HAL_OK;
@@ -108,6 +119,60 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/* CAN1 is the board link: this board transmits commands 0x300..0x302 and
+ * receives gimbal status 0x310..0x312 on FIFO0. */
+static HAL_StatusTypeDef StartBoardLink(void)
+{
+  const CAN_FilterTypeDef status_filter = {
+    .FilterBank = 0,
+    .FilterMode = CAN_FILTERMODE_IDLIST,
+    .FilterScale = CAN_FILTERSCALE_16BIT,
+    .FilterIdHigh = 0x310U << 5,
+    .FilterIdLow = 0x311U << 5,
+    .FilterMaskIdHigh = 0x312U << 5,
+    .FilterMaskIdLow = 0x312U << 5,
+    .FilterFIFOAssignment = CAN_FILTER_FIFO0,
+    .FilterActivation = ENABLE,
+    .SlaveStartFilterBank = 14
+  };
+  HAL_StatusTypeDef status = HAL_CAN_ConfigFilter(&hcan1, &status_filter);
+  if (status != HAL_OK) return status;
+  status = HAL_CAN_Start(&hcan1);
+  if (status != HAL_OK) return status;
+  status = HAL_CAN_ActivateNotification(&hcan1, CAN_IT_RX_FIFO0_MSG_PENDING);
+  if (status != HAL_OK) (void)HAL_CAN_Stop(&hcan1);
+  return status;
+}
+
+static bool BoardStatus(uint32_t now, LinkStatus *out)
+{
+  if (!out) return false;
+  const uint32_t primask = __get_PRIMASK();
+  __disable_irq();
+  const bool fresh = Link_IsFresh(&status_rx, now);
+  if (fresh) *out = status_rx.message.status;
+  __set_PRIMASK(primask);
+  return fresh;
+}
+
+/* Joint angle from the gimbal, in the chassis frame. Rejects uncalibrated,
+ * faulted and non-finite values, plus steps no physical yaw move can make. */
+static bool BoardYaw(const LinkStatus *status, float *relative_yaw)
+{
+  if (!status || !relative_yaw || !status->calibrated || status->fault ||
+      !isfinite(status->yaw_joint)) return false;
+  const float yaw = status->yaw_joint;
+  if (board_yaw_initialized &&
+      fabsf(Motion_Wrap(yaw - board_yaw_last)) > CHASSIS_YAW_JUMP_RAD) {
+    board_yaw_initialized = false;
+    return false;
+  }
+  board_yaw_last = yaw;
+  board_yaw_initialized = true;
+  *relative_yaw = yaw;
+  return true;
+}
+
 static void SendBoardCommand(const RobotCommand *command)
 {
   LinkFrame frames[3];
@@ -239,11 +304,23 @@ static void ServiceChassisDrive(const RobotCommand *command, float dt)
     rr_bench_gains_valid = PID_Init(&rr_bench_pid, &gains);
   }
 #endif
-  /* The first drive stage is chassis-relative translation with no IMU or
-   * upper-board dependency. Reject other modes until yaw is available. */
+  /* Relative yaw comes from the gimbal status frame. Follow additionally
+   * needs a world-stabilized gimbal yaw; with joint-only yaw control the
+   * chassis would rotate until max_rotation and never converge. */
+  const uint32_t now = HAL_GetTick();
+  if (chassis_gate.state != SAFETY_ACTIVE) board_yaw_initialized = false;
+  LinkStatus status;
+  const bool status_ok = BoardStatus(now, &status);
+  float relative_yaw = 0.0f;
+  const bool yaw_ok = status_ok && BoardYaw(&status, &relative_yaw);
+  board_relative_yaw = yaw_ok ? relative_yaw : 0.0f;
+  const bool yaw_needed = command->mode == MODE_SEPARATE || command->mode == MODE_FOLLOW;
+  const bool follow_ready = command->mode != MODE_FOLLOW || CHASSIS_FOLLOW_IMU_READY;
   SafetyInputs safety = {
     .link_fresh = command->remote_valid,
-    .sensors_fresh = command->mode == MODE_SEPARATE,
+    /* A stale/faulted board link stops every mode; separate/follow also
+     * require a usable relative yaw. */
+    .sensors_fresh = status_ok && (!yaw_needed || yaw_ok) && follow_ready,
     .motors_healthy =
 #if CHASSIS_RR_BENCH
       fresh[rr],
@@ -284,7 +361,8 @@ static void ServiceChassisDrive(const RobotCommand *command, float dt)
     chassis_control.previous.vx = 0.0f;
     chassis_control.previous.vy = 0.0f;
   }
-  if (!Chassis_Step(&chassis_control, command, 0.0f, rpm, fresh, allowed, dt, &output) && allowed)
+  if (!Chassis_Step(&chassis_control, command, yaw_ok ? relative_yaw : 0.0f,
+                    rpm, fresh, allowed, dt, &output) && allowed)
     chassis_gate = (SafetyGate){.state = SAFETY_FAULT};
 #endif
 
@@ -343,7 +421,9 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_CAN1_Init();
-  board_link_tx_status = HAL_CAN_Start(&hcan1);
+  board_link_rx_configured = Link_Init(&status_rx, LINK_STATUS,
+                                       BOARD_LINK_ASSEMBLY_MS, BOARD_LINK_FRESH_MS);
+  board_link_tx_status = StartBoardLink();
   MX_TIM6_Init();
   MX_SPI1_Init();
   MX_TIM4_Init();
@@ -480,6 +560,23 @@ void HAL_UARTEx_RxEventCallback(UART_HandleTypeDef *huart, uint16_t Size)
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
   DR16_ErrorCallback(huart);
+}
+
+void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
+{
+  if (hcan != &hcan1) return;
+  while (HAL_CAN_GetRxFifoFillLevel(hcan, CAN_RX_FIFO0) != 0U)
+  {
+    CAN_RxHeaderTypeDef header;
+    uint8_t data[8];
+    if (HAL_CAN_GetRxMessage(hcan, CAN_RX_FIFO0, &header, data) != HAL_OK) break;
+    if (header.IDE != CAN_ID_STD || header.RTR != CAN_RTR_DATA ||
+        header.DLC != 8U || header.StdId < 0x310U || header.StdId > 0x312U) continue;
+    LinkFrame frame = {.id = (uint16_t)header.StdId, .dlc = 8};
+    memcpy(frame.data, data, 8);
+    /* Status never feeds the IWDG; only a valid DR16 frame does that. */
+    if (Link_Receive(&status_rx, &frame, HAL_GetTick())) ++board_status_count;
+  }
 }
 
 void HAL_CAN_RxFifo1MsgPendingCallback(CAN_HandleTypeDef *hcan)

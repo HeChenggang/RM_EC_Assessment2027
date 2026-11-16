@@ -107,3 +107,44 @@ configured/ready/stop_sent 均为 1，两轴发送状态 HAL_OK，控制输出�
 2026-11-16 Yaw 启动吃力：运行快照 ACTIVE、无故障，摇杆回中，目标 -0.481754 rad、实际 -0.549509 rad，目标速度 0.203264 rad/s，输出 0.208392 N·m、反馈 0.203297 N·m，速度接近零。准备将速度比例 kp 从 1 增到 1.2，扭矩上限仍为 0.3 N·m，待失能后下载验证；该静态快照不足以排除机械摩擦或线束影响。
 
 用户关闭使能后，J-Link 确认两电机 state=0、arm=0；烧录 kp=1.2 的 Debug 固件并回读校验 52884 字节成功，复位运行。
+
+## 2026-11-16 Yaw「转到约半圈卡住、须重新使能」的代码复核（未上板）
+
+- 现象：Yaw 朝一个方向转约半圈后停住，反向拨杆无响应，只能遥控重新使能后恢复。
+- 板上固件不是当前工作区代码：`firmware/gimbal/build/Debug/gimbal.bin` 为 53300 字节（10:05:30），而最近一次烧录/回读校验为 52884 字节，差值即未提交的 yaw_input_direction 改动（GimbalControl 220→224 字节）。即板上仍是「目标无界积分」的旧逻辑。
+- 根因（旧逻辑）：`modules/gimbal/gimbal_control.c:55` 只做 `s->target[0] = Motion_Wrap(s->target[0] + cmd->yaw * c->yaw_command_rate * dt)`，松杆不重置目标、误差不钳制，且 Yaw 无任何行程限位（GimbalConfig 仅有 pitch_min/pitch_max）。被线束或机械挡住后目标仍以 0.3 rad/s 累加；松杆后误差保持，速度环持续输出 0.3 N·m 顶住；反向拨杆必须先把 windup 退回去（π 需满杆 10.5 s）才见动作，故表现为“卡住、只有重新使能才能动”。使能时 `Gimbal_Reset` 把 target 清零、tracking 重新取反馈角，因此总能立即恢复——与现象完全一致。
+- 次生现象：windup 超过 π 后 `Motion_Wrap` 令误差由 +π 跳到 −π，指令速度整幅反向，可能表现为猛然反向或来回顶死。
+- 易感因素：Yaw 速度环 output_limit 仅 0.3 N·m、无堵转保护（Pitch 有 GIMBAL_STALL=8）；`README.md` 已注明“Yaw 没有线束角度限位，不能持续单方向转动”，半圈处很可能就是线束极限，0.3 N·m 顶不过去。
+- 未排除的替代分支：Pitch 下限 −0.2343824 rad 恰等于自重静止位（raw 0.0503824），越限 0.001 rad 即触发 GIMBAL_LIMIT(4) 整机停机；Yaw 线束拉扯致 D 帧丢失则触发 GIMBAL_FEEDBACK(3)。两者同样表现为“整机失能、需重新使能”。
+- 判别方法（卡住当下读快照，不要立刻重新使能）：ACTIVE(3)、fault=0、输出 0.3 N·m、Yaw 速度≈0 且 target 领先 pos ≥0.1 rad → 确认目标 windup；STOPPED(0) 且 fault=4 或 3 → 走限位/反馈分支。
+- 工作区未提交的改动（目标钳制到 max_error=max_rate/angle_kp=0.1 rad、松杆与反向时从反馈角重建目标并复位 PID）正是针对该根因，尚未烧录验证。
+
+## 2026-11-16 云台状态帧回传与底盘相对 yaw 接入（P0-1，未上板）
+
+- 目的：解决分离/跟随缺少数值来源。此前底盘 `Chassis_Step` 的 yaw 恒为 0，
+  且 `sensors_fresh` 只在分离模式为真，跟随/小陀螺被安全门直接禁止。
+- 上板新增 `ServiceStatusFrames`：每 20 ms 组成一帧 `LinkStatus`（0x310..0x312），
+  每个主循环只发 1 帧且要求 CAN1 至少剩 2 个空邮箱，给 Yaw MIT 力矩帧留 1 个；
+  100 ms 发不完则整批丢弃，下批换新序号。字段为 yaw 关节角（已按
+  `GIMBAL_YAW_DIRECTION` 和 `GIMBAL_YAW_ZERO` 换算并回绕）、pitch 关节角（夹到限位）、
+  calibrated/motors_healthy/sensors_fresh/fault。状态帧不喂看门狗。
+- 上板 CAN1 发送策略相应放宽：`YawMotor` 的 `send_id` 只在 0 个空邮箱时返回
+  `HAL_BUSY`，`GimbalDrive` 的 `empty()` 对 CAN1 只要求 ≥1 个空邮箱；CAN2 仍要求全空。
+  若维持“必须 3 个全空”，状态帧一占邮箱，Yaw 力矩帧就会报 `HAL_BUSY` 并被误判为
+  `GIMBAL_TX`。
+- 下板新增 CAN1 bank0 16 位 IDLIST 滤波器（0x310/0x311/0x312）、FIFO0 中断、
+  `Link_Init(LINK_STATUS, 50, 100)`；中断中只解标准帧/DLC8，CRC/序号由
+  `Link_Receive` 校验，成功后仅更新计数与最后一帧，不喂 IWDG。
+- 下板 `BoardYaw` 要求状态新鲜（<100 ms）、`calibrated`、无 `fault`、数值有限；
+  相对 yaw 单周期跳变超过 `CHASSIS_YAW_JUMP_RAD=0.3` 时判为无效并清基线，
+  安全门进入 FAULT，需重新回中并使能。退出 ACTIVE 时清基线，避免重新使能时误判。
+- 安全门：任何模式都要求状态帧新鲜；分离/跟随还要求 yaw 有效；跟随另受
+  `CHASSIS_FOLLOW_IMU_READY=0` 限制（云台 yaw 尚未世界系稳定，否则底盘会一直转到
+  `max_rotation`）。`Chassis_Step` 现在接收真实相对 yaw。
+- 零位：新增 `GIMBAL_YAW_ZERO` 与 `GIMBAL_YAW_ZERO_CONFIRMED`，默认未确认，
+  此时上板状态 `calibrated=false`，下板分离/跟随保持停机。上车第一步必须实测零位。
+- 验证：`python tests/run_motor_tests.py` 的十一组用例全部 PASS（本机 DSH 沙箱下
+  `tempfile` 目录不可写，用 `tmp/run_tests_sandbox.py` 包装后运行）；
+  两板 Debug/Release 均以 MinGW Makefiles 构建通过，无 `-Werror` 告警。
+- 待实机：两板 CAN1 实际收发与状态帧计数、`GIMBAL_YAW_ZERO` 标定、分离/小陀螺低速
+  运动、状态帧拔线/坏 CRC/跳变时的停机、跟随需等云台世界系稳定后再打开。
