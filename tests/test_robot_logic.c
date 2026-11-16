@@ -21,7 +21,7 @@ static ChassisConfig chassis_config(void)
 }
 static GimbalConfig gimbal_config(void)
 {
-    GimbalConfig c = {.pitch_min = -0.4f, .pitch_max = 0.5f,
+    GimbalConfig c = {.spin_max_time = 4, .spin_max_travel = 2, .pitch_min = -0.4f, .pitch_max = 0.5f,
         .yaw_command_rate = 1, .pitch_command_rate = 1, .angle_kp = {4, 4},
         .max_dt = 0.02f, .max_rate = {2, 2}, .space = {GIMBAL_JOINT, GIMBAL_JOINT}};
     for (unsigned i = 0; i < 2; ++i) c.rate_pid[i] = (PID_Config){
@@ -126,8 +126,7 @@ int main(void)
     for (unsigned i = 0; i < 30; ++i) CHECK(Robot_Step(&robot, &in, &out));
     CHECK(NEAR(out.chassis.velocity.wz, 1, 1e-5f));
     CHECK(NEAR(out.chassis.velocity.vx, 2*cosf(0.5f), 1e-5f));
-    /* Plan A: spin is a fixed chassis rotation, independent of the relative
-       yaw; translation still rotates with the gimbal joint angle. */
+    /* Spin rotates the chassis while translation uses the gimbal frame. */
     in.command.mode = MODE_SPIN; in.relative_yaw = 3.0f;
     for (unsigned i = 0; i < 60; ++i) CHECK(Robot_Step(&robot, &in, &out));
     CHECK(NEAR(out.chassis.velocity.wz, 1, 1e-5f));
@@ -182,6 +181,50 @@ int main(void)
     CHECK(NEAR(go.target[1], 0.21f, 1e-5f));
     fb.world_fresh = false;
     CHECK(!Gimbal_Step(&gimbal, &cmd, &fb, true, 0.01f, &go));
+    /* Spin captures world heading, rejects joint-only feedback, and switches
+     * back to a joint target without interpreting a world angle as a joint. */
+    gc = gimbal_config();
+    CHECK(Gimbal_Init(&gimbal, &gc));
+    cmd = (RobotCommand){.remote_valid=true, .arm=true};
+    fb = (GimbalFeedback){.joint={3.13f,0}, .world={1.2f,0},
+        .joint_fresh=true, .world_fresh=true};
+    CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go));
+    cmd.mode = MODE_SPIN;
+    CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go));
+    CHECK(NEAR(go.target[0],1.2f,1e-5f) && NEAR(go.torque[0],0,1e-5f));
+    fb.joint[0] = -3.13f; /* encoder wrap as chassis turns underneath */
+    CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go));
+    CHECK(NEAR(go.target[0],1.2f,1e-5f) && fabsf(gimbal.yaw_travel)<0.03f);
+    fb.world[0] = 1.3f;
+    CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go) && go.torque[0]<0);
+    cmd.yaw = 1;
+    CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go) && go.rate[0]>0);
+    cmd.yaw = 0; cmd.mode = MODE_SEPARATE;
+    CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go));
+    CHECK(NEAR(go.target[0],fb.joint[0],1e-5f));
+    cmd.mode = MODE_SPIN; fb.world_fresh = false;
+    CHECK(!Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go) && go.torque[0]==0);
+    fb.world_fresh = true;
+    gc.spin_max_time = 0.05f;
+    CHECK(Gimbal_Init(&gimbal,&gc));
+    for (unsigned i=0; i<4; ++i) {
+        cmd.mode = MODE_SPIN;
+        CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go));
+        cmd.mode = MODE_SEPARATE;
+        CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go));
+    }
+    cmd.mode = MODE_SPIN;
+    CHECK(!Gimbal_Step(&gimbal,&cmd,&fb,true,0.02f,&go));
+    gc = gimbal_config();
+    CHECK(Gimbal_Init(&gimbal,&gc));
+    fb.joint[0] = 0;
+    CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go));
+    for (unsigned i=1; i<20; ++i) {
+        fb.joint[0] = -0.1f*i;
+        CHECK(Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go));
+    }
+    fb.joint[0] = -2.01f;
+    CHECK(!Gimbal_Step(&gimbal,&cmd,&fb,true,0.01f,&go) && go.torque[0]==0);
     cc.wheel_pid[0].output_limit = 20000;
     CHECK(!Chassis_Init(&robot.chassis, &cc));
     gc.pitch_min = gc.pitch_max;

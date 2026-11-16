@@ -28,14 +28,13 @@
 #define GIMBAL_YAW_DIRECTION 1
 #define GIMBAL_PITCH_DIRECTION (-1)
 
-/* P0-2 skeleton: hold the yaw axis in the world frame with the onboard IMU
- * instead of servoing the joint angle. Joystick yaw then rotates the world
- * heading while the chassis can turn underneath the gimbal, which is what the
- * chassis follow loop needs. Disabled until the attitude solution is validated:
- * a drifting or frozen world yaw makes the drive disarm (GIMBAL_FEEDBACK).
- * Do not enable this while relying on spin plan A: a world-locked gimbal makes
- * the spin joint wind continuously, which needs plan B's timeout/limited turns. */
+/* Separate/follow retain their configured yaw frame. MODE_SPIN always uses
+ * the IMU world heading, with bounded duration and joint travel. */
 #define GIMBAL_YAW_WORLD 0
+/* Confirm the measured sensor mounting before permitting spin. */
+#define GIMBAL_IMU_MOUNT_CONFIRMED 0
+#define GIMBAL_SPIN_MAX_TIME_S 4.0f
+#define GIMBAL_SPIN_MAX_TRAVEL_RAD 2.0f
 /* BMI088 sensor axes -> gimbal body axes (x forward, y left, z up). The
  * identity assumes the chip is mounted upright and aligned with the yaw plate;
  * measure the real mounting and replace this matrix before enabling world yaw. */
@@ -80,6 +79,7 @@ static inline GimbalDriveConfig GimbalSetup_Config(void)
 {
     return (GimbalDriveConfig){
         .pitch_only=GIMBAL_PITCH_ONLY_TEST,
+        .spin_hardware_confirmed=GIMBAL_IMU_MOUNT_CONFIRMED && GIMBAL_YAW_ZERO_CONFIRMED,
         .hardware_confirmed=GIMBAL_PITCH_ONLY_TEST || (GIMBAL_HARDWARE_CONFIRMED &&
             GIMBAL_YAW_PMAX > 0 && GIMBAL_YAW_VMAX > 0 && GIMBAL_YAW_TMAX >= 0.3f),
         .pitch_zero=GIMBAL_PITCH_ZERO,
@@ -88,6 +88,7 @@ static inline GimbalDriveConfig GimbalSetup_Config(void)
         .pitch_stall_error=GIMBAL_PITCH_STALL_ERROR,
         .yaw_direction=GIMBAL_YAW_DIRECTION, .pitch_direction=GIMBAL_PITCH_DIRECTION,
         .control={.pitch_min=GIMBAL_PITCH_MIN, .pitch_max=GIMBAL_PITCH_MAX,
+            .spin_max_time=GIMBAL_SPIN_MAX_TIME_S, .spin_max_travel=GIMBAL_SPIN_MAX_TRAVEL_RAD,
             .yaw_command_rate=0.3f, .pitch_command_rate=0.2f,
             .angle_kp={3,3}, .max_dt=0.02f, .max_rate={0.3f,0.2f},
             .space={GIMBAL_YAW_WORLD ? GIMBAL_WORLD : GIMBAL_JOINT, GIMBAL_JOINT},

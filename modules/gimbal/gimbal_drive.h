@@ -13,6 +13,7 @@ typedef struct {
     float pitch_zero;
     int yaw_direction, pitch_direction;
     bool hardware_confirmed;
+    bool spin_hardware_confirmed; /* IMU mounting and chassis-relative zero */
     bool pitch_only; /* Commission Pitch without enabling/commanding Yaw. */
     uint32_t pitch_stall_ms;
     float pitch_stall_travel, pitch_stall_error; /* rad; both positive */
@@ -44,7 +45,8 @@ void GimbalDrive_Step(GimbalDrive *s, const RobotCommand *cmd, bool link_fresh,
                       const YawMotor_Feedback *yaw, const PitchMotor_Feedback *pitch,
                       uint32_t now);
 /* Feed the gimbal heading measured by the onboard attitude solution when the
- * yaw axis is configured as GIMBAL_WORLD. Call every attitude update; the
+ * yaw axis is configured as GIMBAL_WORLD or spin may be selected.
+ * Call every attitude update; the
  * sample expires after a short timeout and the drive then disarms. */
 void GimbalDrive_SetWorld(GimbalDrive *s, float yaw, float yaw_rate, uint32_t now);
 #endif

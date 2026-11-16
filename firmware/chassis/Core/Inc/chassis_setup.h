@@ -11,9 +11,9 @@
 #define CHASSIS_SPEED_INTEGRAL_LIMIT_RAW 650.0f
 #define CHASSIS_TRANSLATION_LIMIT_MPS 0.60f
 #define CHASSIS_TRANSLATION_ACCEL_MPS2 1.20f
-/* Spin mode (plan A): the whole robot rotates at a fixed rate while the gimbal
- * yaw joint holds its angle, so the yaw harness does not wind. The gimbal view
- * rotates with the chassis. Translation still uses the relative yaw frame. */
+/* Conventional spin: chassis rotates under a world-stabilized yaw axis.
+ * Translation follows the measured gimbal heading. Upper-board spin limits
+ * bound the armed-session duration and joint travel (no slip ring assumed). */
 #define CHASSIS_SPIN_RATE_RAD_S 0.50f
 /* Follow-mode rotation cap; the proportional loop saturates here. */
 #define CHASSIS_MAX_ROTATION_RAD_S 1.0f

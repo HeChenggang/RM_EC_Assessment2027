@@ -8,6 +8,8 @@ void Gimbal_Reset(GimbalControl *s)
     if (s == NULL) return;
     s->tracking = false;
     s->yaw_input_direction = 0;
+    s->yaw_world = false;
+    s->spin_elapsed = s->yaw_last = s->yaw_travel = 0;
     s->target[0] = s->target[1] = 0;
     PID_Reset(&s->rate[0]); PID_Reset(&s->rate[1]);
 }
@@ -19,7 +21,9 @@ bool Gimbal_Init(GimbalControl *s, const GimbalConfig *config)
     if (!isfinite(c.pitch_min) || !isfinite(c.pitch_max) || c.pitch_min >= c.pitch_max ||
         c.pitch_min <= -MOTION_PI / 2 || c.pitch_max >= MOTION_PI / 2 ||
         !isfinite(c.max_dt) || c.max_dt <= 0 || !isfinite(c.yaw_command_rate) ||
-        c.yaw_command_rate <= 0 || !isfinite(c.pitch_command_rate) || c.pitch_command_rate <= 0)
+        c.yaw_command_rate <= 0 || !isfinite(c.pitch_command_rate) || c.pitch_command_rate <= 0 ||
+        !isfinite(c.spin_max_time) || c.spin_max_time <= 0 ||
+        !isfinite(c.spin_max_travel) || c.spin_max_travel <= 0)
         return false;
     for (unsigned i = 0; i < 2; ++i) {
         if ((c.space[i] != GIMBAL_JOINT && c.space[i] != GIMBAL_WORLD) ||
@@ -39,11 +43,13 @@ bool Gimbal_Step(GimbalControl *s, const RobotCommand *cmd,
         !cmd->remote_valid || !cmd->arm || cmd->estop || f == NULL || !f->joint_fresh ||
         !isfinite(dt) || dt <= 0 || dt > s->config.max_dt) goto stop;
     const GimbalConfig *c = &s->config;
+    const bool spin = cmd->mode == MODE_SPIN;
+    const bool yaw_world = spin || c->space[0] == GIMBAL_WORLD;
     if (!isfinite(f->joint[1]) || f->joint[1] < c->pitch_min || f->joint[1] > c->pitch_max) goto stop;
     float measured[2], rate[2];
     for (unsigned i = 0; i < 2; ++i) {
         if (!isfinite(f->joint[i])) goto stop;
-        const bool world = c->space[i] == GIMBAL_WORLD;
+        const bool world = i == 0 ? yaw_world : c->space[i] == GIMBAL_WORLD;
         if (world && !f->world_fresh) goto stop;
         measured[i] = world ? f->world[i] : f->joint[i];
         rate[i] = world ? f->world_rate[i] : f->joint_rate[i];
@@ -51,7 +57,24 @@ bool Gimbal_Step(GimbalControl *s, const RobotCommand *cmd,
     }
     if (!s->tracking) {
         s->target[0] = Motion_Wrap(measured[0]); s->target[1] = measured[1];
+        s->yaw_last = f->joint[0];
+        s->yaw_world = yaw_world;
         s->tracking = true;
+    }
+    /* Keep the winding budget across mode switches. Wrapped feedback can
+     * cross +/-pi; consecutive physical samples must differ by less than pi. */
+    s->yaw_travel += Motion_Wrap(f->joint[0] - s->yaw_last);
+    s->yaw_last = f->joint[0];
+    if (spin) s->spin_elapsed += dt;
+    if (!isfinite(s->yaw_travel) || !isfinite(s->spin_elapsed) ||
+        (s->spin_elapsed > 0 && (s->spin_elapsed >= c->spin_max_time ||
+         fabsf(s->yaw_travel) >= c->spin_max_travel))) goto stop;
+    if (s->yaw_world != yaw_world) {
+        /* Capture the new frame's current heading without a target jump. */
+        s->target[0] = Motion_Wrap(measured[0]);
+        s->yaw_input_direction = 0;
+        s->yaw_world = yaw_world;
+        PID_Reset(&s->rate[0]);
     }
     const int yaw_direction = (cmd->yaw > 0.0f) - (cmd->yaw < 0.0f);
     const float yaw_angle = Motion_Wrap(measured[0]);

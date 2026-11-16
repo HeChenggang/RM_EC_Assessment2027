@@ -315,13 +315,12 @@ static void ServiceChassisDrive(const RobotCommand *command, float dt)
   float relative_yaw = 0.0f;
   const bool yaw_ok = status_ok && BoardYaw(&status, &relative_yaw);
   board_relative_yaw = yaw_ok ? relative_yaw : 0.0f;
-  const bool yaw_needed = command->mode == MODE_SEPARATE || command->mode == MODE_FOLLOW;
   const bool follow_ready = command->mode != MODE_FOLLOW || CHASSIS_FOLLOW_IMU_READY;
   SafetyInputs safety = {
     .link_fresh = command->remote_valid,
-    /* A stale/faulted board link stops every mode; separate/follow also
-     * require a usable relative yaw. */
-    .sensors_fresh = status_ok && (!yaw_needed || yaw_ok) && follow_ready,
+    /* Every mode needs calibrated relative yaw for gimbal-frame translation.
+     * The upper board reports a fault if spin world feedback is unavailable. */
+    .sensors_fresh = status_ok && yaw_ok && follow_ready,
     .motors_healthy =
 #if CHASSIS_RR_BENCH
       fresh[rr],

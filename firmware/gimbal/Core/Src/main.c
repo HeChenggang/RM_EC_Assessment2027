@@ -171,7 +171,11 @@ static void ServiceStatusFrames(uint32_t now)
       .calibrated = motors_ok && GIMBAL_YAW_ZERO_CONFIRMED,
       .motors_healthy = motors_ok,
       .sensors_fresh = imu_online,
-      .fault = gimbal_drive.fault != GIMBAL_OK || !board_link_online
+      .fault = gimbal_drive.fault != GIMBAL_OK || !board_link_online ||
+        (board_command.mode == MODE_SPIN &&
+         (!GIMBAL_IMU_MOUNT_CONFIRMED || !GIMBAL_YAW_ZERO_CONFIRMED ||
+          !gimbal_drive.world_received ||
+          (uint32_t)(now - gimbal_drive.world_ms) >= 30U))
     };
     status_batch_ms = now;
     if (!Link_EncodeStatus(&status, status_sequence++, status_frames)) return;
@@ -307,6 +311,7 @@ int main(void)
         /* Attitude needs a bias-free gyro. Arm a stationary window once per
          * second while disarmed; a window taken while moving is rejected. */
         attitude_ready = false;
+        gimbal_drive.world_received = false;
         if (!imu_calibration.running && !board_command.arm &&
             (uint32_t)(HAL_GetTick()-imu_calibration_retry_ms) >= 1000U) {
           imu_calibration_retry_ms = HAL_GetTick();
@@ -325,13 +330,13 @@ int main(void)
             attitude_ready = true;
             attitude_world_yaw = attitude_out.yaw;
             attitude_world_rate = attitude_out.euler_rate[2];
-            if (GIMBAL_YAW_WORLD)
+            if (GIMBAL_YAW_WORLD || GIMBAL_IMU_MOUNT_CONFIRMED)
               GimbalDrive_SetWorld(&gimbal_drive, attitude_out.yaw,
                                    attitude_out.euler_rate[2], HAL_GetTick());
           } else {
-            /* A gap or a bad sample invalidates the orientation; the drive
-             * disarms once its world sample ages out. */
+            /* A gap or bad sample immediately invalidates world feedback. */
             attitude_ready = false;
+            gimbal_drive.world_received = false;
           }
         }
       } else if (new_gyro) {

@@ -95,7 +95,11 @@ void GimbalDrive_Step(GimbalDrive *s, const RobotCommand *cmd, bool link,
         s->last_step = now;
         return;
     }
-    if (s->config.control.space[0] == GIMBAL_WORLD &&
+    if (cmd->mode == MODE_SPIN &&
+        (!s->config.spin_hardware_confirmed || s->config.pitch_only)) {
+        stop(s,GIMBAL_CONFIG,now); return;
+    }
+    if ((cmd->mode == MODE_SPIN || s->config.control.space[0] == GIMBAL_WORLD) &&
         (!s->world_received || (uint32_t)(now-s->world_ms) >= WORLD_MS)) {
         /* A world-referenced yaw axis is only as good as its attitude sample. */
         stop(s,GIMBAL_FEEDBACK,now); return;

@@ -264,5 +264,21 @@ int main(void)
     CHECK(peak<-2.0f && peak>=-DM4340_T_MAX);
     c=GimbalSetup_Config(); c.pitch_stall_travel=NAN;
     CHECK(!GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
+    /* Conventional spin is unavailable without confirmed installation. */
+    init(); arm(); cmd.mode=MODE_SPIN; feedback(1);
+    GimbalDrive_SetWorld(&s,1.0f,0,now);
+    step(5,true);
+    CHECK(s.state==GIMBAL_STOPPED && s.fault==GIMBAL_CONFIG);
+    init(); c=config(); c.spin_hardware_confirmed=true;
+    CHECK(GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
+    arm(); cmd.mode=MODE_SPIN; feedback(1);
+    GimbalDrive_SetWorld(&s,1.0f,0,now);
+    step(5,true);
+    CHECK(s.state==GIMBAL_ACTIVE && fabsf(s.output.target[0]-1.0f)<0.001f);
+    feedback(1); step(15,true);
+    feedback(1); step(10,true);
+    CHECK(s.state==GIMBAL_STOPPED && s.fault==GIMBAL_FEEDBACK);
+    GimbalDrive_SetWorld(&s,1.0f,0,now); feedback(1); step(5,true);
+    CHECK(s.state==GIMBAL_STOPPED); /* held ARM cannot recover */
     return 0;
 }
