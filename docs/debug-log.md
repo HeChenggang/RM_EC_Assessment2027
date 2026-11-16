@@ -148,3 +148,26 @@ configured/ready/stop_sent 均为 1，两轴发送状态 HAL_OK，控制输出�
   两板 Debug/Release 均以 MinGW Makefiles 构建通过，无 `-Werror` 告警。
 - 待实机：两板 CAN1 实际收发与状态帧计数、`GIMBAL_YAW_ZERO` 标定、分离/小陀螺低速
   运动、状态帧拔线/坏 CRC/跳变时的停机、跟随需等云台世界系稳定后再打开。
+
+## 2026-11-16：云台 yaw 世界系稳定骨架（P0-2，未上板）
+
+- 目的：跟随需要“底盘转、云台保持世界朝向”，关节角才会随底盘旋转减小；此前
+  yaw 轴只用关节角反馈，底盘转到哪云台跟到哪，跟随环不收敛。P0-2 先打通
+  BMI088 → 姿态解算 → 世界 yaw 反馈 → `Gimbal_Step` 的链路。
+- 上板主循环新增 IMU 段：`BMI088_Service` 返回新陀螺样本时，用
+  `HAL_GetTick()` 差算 dt，把 dps 乘 π/180 后调用
+  `Attitude_Update(accel, gyro, dt, &attitude_out)`；解算成功才置
+  `attitude_ready`，并在 `GIMBAL_YAW_WORLD` 时
+  `GimbalDrive_SetWorld(yaw, yaw_rate, HAL_GetTick())`。未完成陀螺零偏标定时
+  每 1 s 重试 `BMI088_StartGyroCalibration`，且只在未使能时重试。
+- `GimbalDrive` 支持 yaw 轴 `GIMBAL_WORLD`：Init 只对 pitch 强制 JOINT；世界
+  样本超过 30 ms 未更新时按 `GIMBAL_FEEDBACK` 停机；反馈同时填
+  `world/world_rate/world_fresh`。`GIMBAL_YAW_WORLD=0` 时行为与之前完全一致。
+- 修复既有隐患：`GimbalDrive_Step` 用 `elapsed*0.001f` 算 dt，20 ms 浮点舍入后
+  可能略大于 `control.max_dt=0.02f`，导致误报 `GIMBAL_LIMIT`。现把 dt 显式钳到
+  `max_dt`，新增 WORLD 过期用例后 `--gimbal`、`--logic` 均通过。
+- 安全：世界 yaw 未就绪、姿态解算失败、样本过期、IMU 未标定都会退出使能而不是
+  继续用旧角度；`GIMBAL_YAW_WORLD` 默认 0，实机验证前不改变现有行为。
+- 待实机：BMI088 安装矩阵 `GIMBAL_IMU_SENSOR_TO_BODY`、陀螺零偏标定时间、
+  世界 yaw 漂移速度、云台锁定世界朝向时的手感、底盘 follow 闭环整定（先把
+  `CHASSIS_FOLLOW_IMU_READY` 置 1，低速小 `follow_kp` 起步）。

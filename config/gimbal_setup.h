@@ -25,6 +25,24 @@
 #define GIMBAL_YAW_DIRECTION 1
 #define GIMBAL_PITCH_DIRECTION (-1)
 
+/* P0-2 skeleton: hold the yaw axis in the world frame with the onboard IMU
+ * instead of servoing the joint angle. Joystick yaw then rotates the world
+ * heading while the chassis can turn underneath the gimbal, which is what the
+ * chassis follow loop needs. Disabled until the attitude solution is validated:
+ * a drifting or frozen world yaw makes the drive disarm (GIMBAL_FEEDBACK). */
+#define GIMBAL_YAW_WORLD 0
+/* BMI088 sensor axes -> gimbal body axes (x forward, y left, z up). The
+ * identity assumes the chip is mounted upright and aligned with the yaw plate;
+ * measure the real mounting and replace this matrix before enabling world yaw. */
+#define GIMBAL_IMU_SENSOR_TO_BODY {{1.0f,0.0f,0.0f},{0.0f,1.0f,0.0f},{0.0f,0.0f,1.0f}}
+/* Attitude fusion tuning; the mounting matrix lives in the gimbal main file
+ * because it describes how the BMI088 is bolted to the yaw plate. */
+#define GIMBAL_IMU_GRAVITY 9.80665f
+#define GIMBAL_IMU_ACCEL_TOLERANCE 0.10f /* fraction of 1 g accepted for correction */
+#define GIMBAL_IMU_CORRECTION_GAIN 1.0f  /* rad/s of tilt correction per unit error */
+#define GIMBAL_IMU_MAX_DT 0.02f
+#define GIMBAL_IMU_MAX_GYRO 35.0f        /* rad/s; BMI088 full scale is 2000 dps */
+
 /* Measured yaw motor position with the gimbal pointing along chassis forward.
  * Measure it on hardware (read yaw_feedback.pos * GIMBAL_YAW_DIRECTION with the
  * gimbal centered), then set the value and GIMBAL_YAW_ZERO_CONFIRMED to 1.
@@ -60,7 +78,7 @@ static inline GimbalDriveConfig GimbalSetup_Config(void)
         .control={.pitch_min=GIMBAL_PITCH_MIN, .pitch_max=GIMBAL_PITCH_MAX,
             .yaw_command_rate=0.3f, .pitch_command_rate=0.2f,
             .angle_kp={3,3}, .max_dt=0.02f, .max_rate={0.3f,0.2f},
-            .space={GIMBAL_JOINT,GIMBAL_JOINT},
+            .space={GIMBAL_YAW_WORLD ? GIMBAL_WORLD : GIMBAL_JOINT, GIMBAL_JOINT},
             .rate_pid={{.kp=GIMBAL_YAW_SPEED_KP,.output_limit=0.3f,.max_dt=0.02f},
                        {.kp=GIMBAL_PITCH_SPEED_KP,.ki=GIMBAL_PITCH_SPEED_KI,
                         .integral_limit=GIMBAL_PITCH_INTEGRAL_LIMIT,

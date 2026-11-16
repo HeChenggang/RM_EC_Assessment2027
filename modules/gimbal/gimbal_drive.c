@@ -1,4 +1,5 @@
 #include "gimbal_drive.h"
+#include "motion_math.h"
 #include <math.h>
 #include <stddef.h>
 
@@ -6,6 +7,7 @@
 #define FEEDBACK_MS 100U
 #define RETRY_MS 20U
 #define ENABLE_MS 300U
+#define WORLD_MS 30U
 
 bool GimbalDrive_Init(GimbalDrive *s, const GimbalDriveConfig *c,
                       CAN_HandleTypeDef *yaw, CAN_HandleTypeDef *pitch, uint32_t now)
@@ -21,7 +23,8 @@ bool GimbalDrive_Init(GimbalDrive *s, const GimbalDriveConfig *c,
         isfinite(c->pitch_stall_error) && c->pitch_stall_error > c->pitch_stall_travel &&
         (c->yaw_direction == 1 || c->yaw_direction == -1) &&
         (c->pitch_direction == 1 || c->pitch_direction == -1) &&
-        c->control.space[0] == GIMBAL_JOINT && c->control.space[1] == GIMBAL_JOINT &&
+        (c->control.space[0] == GIMBAL_JOINT || c->control.space[0] == GIMBAL_WORLD) &&
+        c->control.space[1] == GIMBAL_JOINT &&
         fabsf(c->pitch_zero+c->control.pitch_min*c->pitch_direction) <= DM4340_P_MAX &&
         fabsf(c->pitch_zero+c->control.pitch_max*c->pitch_direction) <= DM4340_P_MAX &&
         c->control.rate_pid[1].output_limit <= DM4340_T_MAX &&
@@ -67,6 +70,15 @@ static void stop(GimbalDrive *s, GimbalDriveFault fault, uint32_t now)
     s->stop_sent = (s->config.pitch_only || s->tx[0] == HAL_OK) && s->tx[1] == HAL_OK;
 }
 
+void GimbalDrive_SetWorld(GimbalDrive *s, float yaw, float rate, uint32_t now)
+{
+    if (!s || !isfinite(yaw) || !isfinite(rate)) return;
+    s->world_yaw = Motion_Wrap(yaw);
+    s->world_rate = rate;
+    s->world_ms = now;
+    s->world_received = true;
+}
+
 void GimbalDrive_Step(GimbalDrive *s, const RobotCommand *cmd, bool link,
                       const YawMotor_Feedback *y, const PitchMotor_Feedback *p, uint32_t now)
 {
@@ -82,6 +94,11 @@ void GimbalDrive_Step(GimbalDrive *s, const RobotCommand *cmd, bool link,
         s->ready = Command_Neutral(cmd,0.02f);
         s->last_step = now;
         return;
+    }
+    if (s->config.control.space[0] == GIMBAL_WORLD &&
+        (!s->world_received || (uint32_t)(now-s->world_ms) >= WORLD_MS)) {
+        /* A world-referenced yaw axis is only as good as its attitude sample. */
+        stop(s,GIMBAL_FEEDBACK,now); return;
     }
     if (s->state == GIMBAL_STOPPED) {
         if (!s->ready || !Command_Neutral(cmd,0.02f) || !s->stop_sent || !empty(s)) {
@@ -137,7 +154,10 @@ void GimbalDrive_Step(GimbalDrive *s, const RobotCommand *cmd, bool link,
     GimbalFeedback f = {.joint={s->config.pitch_only ? 0 : y->pos*s->config.yaw_direction,
         (p->motor.pos-s->config.pitch_zero)*s->config.pitch_direction},
         .joint_rate={s->config.pitch_only ? 0 : y->vel*s->config.yaw_direction,p->motor.vel*s->config.pitch_direction},
-        .joint_fresh=true};
+        .world={s->world_yaw, 0},
+        .world_rate={s->world_rate, 0},
+        .joint_fresh=true,
+        .world_fresh=s->world_received && (uint32_t)(now-s->world_ms) < WORLD_MS};
     /* User readings are rounded to 0.001 rad; snap only the measurement at
      * endpoints. Targets retain the exact limits and outward torque is blocked. */
     if (f.joint[1] < s->config.control.pitch_min &&
@@ -148,7 +168,10 @@ void GimbalDrive_Step(GimbalDrive *s, const RobotCommand *cmd, bool link,
         f.joint[1] = s->config.control.pitch_max;
     RobotCommand local_command = *cmd;
     if (s->config.pitch_only) local_command.yaw = 0;
-    if (!Gimbal_Step(&s->control,&local_command,&f,true,elapsed*0.001f,&s->output)) {
+    /* Rounding 20 ms to float can exceed the configured max_dt by one ULP. */
+    float dt = elapsed * 0.001f;
+    if (dt > s->config.control.max_dt) dt = s->config.control.max_dt;
+    if (!Gimbal_Step(&s->control,&local_command,&f,true,dt,&s->output)) {
         stop(s,GIMBAL_LIMIT,now); return;
     }
     s->state = GIMBAL_ACTIVE;

@@ -35,6 +35,7 @@
 #include "gimbal_setup.h"
 #include "board_link.h"
 #include "board_link_setup.h"
+#include "attitude.h"
 #include "motion_math.h"
 #include <math.h>
 #include <string.h>
@@ -93,6 +94,16 @@ static uint8_t status_sequence;
 volatile uint32_t status_sent_count;
 GimbalDrive gimbal_drive;
 volatile bool gimbal_configured;
+/* World-frame yaw from the onboard IMU, used only when GIMBAL_YAW_WORLD is 1.
+ * The attitude is relative (no magnetometer): yaw zero is the heading at the
+ * first stationary sample and it drifts, which is acceptable for a hold loop. */
+static Attitude attitude;
+static AttitudeOutput attitude_out;
+static uint32_t attitude_last_ms;
+static uint32_t imu_calibration_retry_ms;
+volatile bool attitude_ready;
+volatile float attitude_world_yaw;
+volatile float attitude_world_rate;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -183,6 +194,16 @@ static void ServiceStatusFrames(uint32_t now)
   ++status_sent_count;
 }
 
+/* BMI088 mounting and fusion limits come from config/gimbal_setup.h. */
+static const AttitudeConfig attitude_config = {
+  .sensor_to_body = GIMBAL_IMU_SENSOR_TO_BODY,
+  .gravity = GIMBAL_IMU_GRAVITY,
+  .accel_tolerance = GIMBAL_IMU_ACCEL_TOLERANCE,
+  .correction_gain = GIMBAL_IMU_CORRECTION_GAIN,
+  .max_dt = GIMBAL_IMU_MAX_DT,
+  .max_gyro = GIMBAL_IMU_MAX_GYRO,
+};
+
 /* USER CODE END 0 */
 
 /**
@@ -234,6 +255,7 @@ int main(void)
       GIMBAL_YAW_PROTOCOL_CONFIRMED ? &yaw_ranges : NULL);
   if (yaw_init_status == HAL_OK) yaw_init_status = StartYawFeedback();
   imu_init_status = BMI088_Init(&hspi1);
+  if (imu_init_status == HAL_OK) (void)Attitude_Init(&attitude, &attitude_config);
   GimbalDriveConfig drive_config = GimbalSetup_Config();
   drive_config.hardware_confirmed = drive_config.hardware_confirmed &&
       pitch_init_status == HAL_OK && yaw_init_status == HAL_OK;
@@ -278,9 +300,43 @@ int main(void)
     }
     if (imu_init_status == HAL_OK)
     {
-      (void)BMI088_Service();
+      const bool new_gyro = BMI088_Service();
       imu_online = BMI088_GetSample(&imu_sample);
       BMI088_GetGyroCalibration(&imu_calibration);
+      if (!imu_calibration.calibrated) {
+        /* Attitude needs a bias-free gyro. Arm a stationary window once per
+         * second while disarmed; a window taken while moving is rejected. */
+        attitude_ready = false;
+        if (!imu_calibration.running && !board_command.arm &&
+            (uint32_t)(HAL_GetTick()-imu_calibration_retry_ms) >= 1000U) {
+          imu_calibration_retry_ms = HAL_GetTick();
+          (void)BMI088_StartGyroCalibration(BMI088_CALIBRATION_SAMPLES);
+        }
+      } else if (new_gyro && attitude_last_ms != 0U) {
+        const uint32_t elapsed = HAL_GetTick()-attitude_last_ms;
+        attitude_last_ms = HAL_GetTick();
+        if (elapsed != 0U) {
+          const float gyro[3] = {
+            imu_sample.gyro_dps[0]*0.01745329252f,
+            imu_sample.gyro_dps[1]*0.01745329252f,
+            imu_sample.gyro_dps[2]*0.01745329252f};
+          if (Attitude_Update(&attitude, imu_sample.accel_mps2, gyro,
+                              elapsed*0.001f, &attitude_out)) {
+            attitude_ready = true;
+            attitude_world_yaw = attitude_out.yaw;
+            attitude_world_rate = attitude_out.euler_rate[2];
+            if (GIMBAL_YAW_WORLD)
+              GimbalDrive_SetWorld(&gimbal_drive, attitude_out.yaw,
+                                   attitude_out.euler_rate[2], HAL_GetTick());
+          } else {
+            /* A gap or a bad sample invalidates the orientation; the drive
+             * disarms once its world sample ages out. */
+            attitude_ready = false;
+          }
+        }
+      } else if (new_gyro) {
+        attitude_last_ms = HAL_GetTick();
+      }
     }
   }
   /* USER CODE END 3 */

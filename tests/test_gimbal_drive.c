@@ -209,6 +209,26 @@ int main(void)
     CHECK(s.state==GIMBAL_ACTIVE);
     p.last_rx_ms=now-100; step(5,true);
     CHECK(s.state==GIMBAL_STOPPED && s.fault==GIMBAL_FEEDBACK);
+    /* P0-2 skeleton: a WORLD yaw axis tracks the attitude sample, not the joint
+     * angle, and disarms as soon as that sample goes stale. */
+    init(); c=config(); c.control.space[0]=GIMBAL_WORLD;
+    CHECK(GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
+    cmd.arm=false; step(20,true);
+    GimbalDrive_SetWorld(&s,0.4f,0.0f,now);
+    cmd.arm=true; step(5,true); step(5,true);
+    y=(YawMotor_Feedback){.received=true,.scaled=true,.state=1,
+        .last_rx_ms=now,.rx_count=1,.pos=0.2f};
+    p=(PitchMotor_Feedback){.received=true,.last_rx_ms=now,.rx_count=1,
+        .motor={.pos=0.5f,.state=1}};
+    GimbalDrive_SetWorld(&s,0.4f,0.0f,now);
+    step(5,true);
+    CHECK(s.state==GIMBAL_ACTIVE && s.fault==GIMBAL_OK);
+    cmd.yaw=1; GimbalDrive_SetWorld(&s,0.4f,0.0f,now);
+    feedback(1); GimbalDrive_SetWorld(&s,0.4f,0.0f,now); step(5,true);
+    CHECK(torque[0]>0); /* joystick moves the world heading, joint stays free */
+    step(20,true); CHECK(s.state==GIMBAL_ACTIVE);
+    step(20,true); /* world sample now older than WORLD_MS */
+    CHECK(s.state==GIMBAL_STOPPED && s.fault==GIMBAL_FEEDBACK);
     c.pitch_stall_ms=0;
     CHECK(!GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
     c=GimbalSetup_Config(); c.pitch_stall_travel=NAN;

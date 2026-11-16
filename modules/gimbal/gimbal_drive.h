@@ -31,6 +31,10 @@ typedef struct {
     bool pitch_stall_tracking;
     uint32_t pitch_stall_started;
     float pitch_stall_position;
+    /* Attitude adapter output for a WORLD yaw axis; see GimbalDrive_SetWorld. */
+    float world_yaw, world_rate;
+    uint32_t world_ms;
+    bool world_received;
 } GimbalDrive;
 /* Drivers must already be initialized with verified MIT protocol ranges.
  * Call from main only; never writes zero position or motor parameters. */
@@ -39,4 +43,8 @@ bool GimbalDrive_Init(GimbalDrive *s, const GimbalDriveConfig *config,
 void GimbalDrive_Step(GimbalDrive *s, const RobotCommand *cmd, bool link_fresh,
                       const YawMotor_Feedback *yaw, const PitchMotor_Feedback *pitch,
                       uint32_t now);
+/* Feed the gimbal heading measured by the onboard attitude solution when the
+ * yaw axis is configured as GIMBAL_WORLD. Call every attitude update; the
+ * sample expires after a short timeout and the drive then disarms. */
+void GimbalDrive_SetWorld(GimbalDrive *s, float yaw, float yaw_rate, uint32_t now);
 #endif

@@ -43,7 +43,13 @@
 `calibrated=false`，底盘在分离/跟随会进入 FAULT；小陀螺不依赖 yaw，可先单独验证。
 
 跟随模式还要求云台 yaw 做世界系稳定，否则关节伺服会把相对角锁住，底盘会一直转到
-旋转上限。该功能完成前 `CHASSIS_FOLLOW_IMU_READY=0` 会让跟随档保持停机。
+旋转上限。P0-2 骨架已接入世界系 yaw 但默认关闭：把 `config/gimbal_setup.h` 的
+`GIMBAL_YAW_WORLD` 置 1 后，yaw 轴改用 BMI088 姿态解算的世界 yaw 作反馈，底盘转向
+时云台保持世界朝向，关节角随之减小，跟随环才可能收敛。上电后需静止等待陀螺零偏
+标定完成；零偏未完成、姿态解算失败或世界角超过 30 ms 未更新时，云台会以
+`GIMBAL_FEEDBACK` 退出使能。无磁力计，世界 yaw 会缓慢漂移，长时间运行需重新标定。
+首次开启前必须核对 `GIMBAL_IMU_SENSOR_TO_BODY` 安装矩阵与实机安装方向一致。
+跟随档还受 `CHASSIS_FOLLOW_IMU_READY=0` 限制，世界系调通后再置 1。
 状态帧丢失超过 100 ms、CRC/序号错误，或 yaw 单周期跳变超过 0.3 rad 时，
 底盘会退出使能，需要重新回中并使能。
 在 `firmware/chassis/Core/Inc/chassis_setup.h` 填写实测轮向（左前、左后、右后、右前）、
