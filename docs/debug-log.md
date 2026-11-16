@@ -187,3 +187,28 @@ configured/ready/stop_sent 均为 1，两轴发送状态 HAL_OK，控制输出�
   `wz=spin_rate` 且 `vx/vy` 等于按 3 rad 旋转后的平移，覆盖“旋转与平移解耦”。
 - 待实机：转向正负（正 wz 应为俯视逆时针）、0.5 rad/s 下的平移手感、轮速是否饱和、
   急停/断链时旋转立即归零。
+
+## 2026-11-16：Pitch 解除工作力矩上限（未上板）
+
+- 现象：2 N·m 工作上限、积分 1.8 N·m 下 Pitch 实机仍无法抬头；用户确认手动可顺畅
+  抬起但较重。更早的 1 N·m 档命令已饱和、反馈约 -1.0 N·m、位置固定 0.0428 rad。
+- 修改 `config/gimbal_setup.h`：`GIMBAL_PITCH_TORQUE_LIMIT` 由 `2.0f` 改为
+  `DM4340_T_MAX`（28 N·m），`GIMBAL_PITCH_INTEGRAL_LIMIT` 由 `1.8f` 改为
+  `0.9f * DM4340_T_MAX`（25.2 N·m）；Kp/Ki 仍 2/2。只抬总输出而保留 1.8 积分上限时，
+  零误差稳态保持仍被积分项限制在约 1.8～2.2 N·m，等于没有解除，故同步放大积分。
+- 保留：关节限位 [-0.2343824, 0.959] rad、端点向外力矩禁止、堵转停机、
+  命令/反馈/急停/周期看门狗。`GimbalDrive_Init` 仍校验
+  `output_limit <= DM4340_T_MAX`，`dm4340_mit_ctrl` 对超量程返回 HAL_ERROR，
+  因此 28 N·m 是软件可达上限，不是机械或热保证。
+- 取舍：堵转判据为 `|torque| >= 0.9*output_limit` 且目标误差 >= 0.05 rad 且
+  1000 ms 位移 < 0.005 rad；上限改成 28 N·m 后触发点约 25.2 N·m，普通“负载偏大”
+  不再快速停机，带载抬头时可能长时间大电流堵转。首次带载需随时急停并观察电机温度。
+- 测试：`tests/test_gimbal_drive.c` 增加生产配置断言（`output_limit==DM4340_T_MAX`、
+  `integral_limit==0.9*DM4340_T_MAX`）和冻结关节、`cmd.pitch=1` 持续 6 s 的用例，
+  断言力矩超过 2 N·m（约 2.7 N·m）且不超过 DM4340 量程；原 Pitch-only 场景显式
+  改回 2 N·m/1.8 N·m，保留原有 1000 步积分建立与堵转窗口时序。
+  `python tmp/run_tests_sandbox.py --gimbal` 通过。本次 ninja 在沙箱内启动编译器会挂起，
+  改用 `tmp/build_gimbal_manual.py` 逐条执行 ninja 列出的命令，Debug/Release 均构建通过
+  （Debug FLASH 65.7 KB，Release 40.4 KB）。
+- 待实机：烧录后先空载确认方向与限位，再小幅带载抬头；若 28 N·m 仍不足，问题更可能
+  在机械（配重、线束、减速器）而非软件限幅，不应继续抬上限。

@@ -155,8 +155,15 @@ int main(void)
     init(); c=GimbalSetup_Config();
     CHECK(!c.pitch_only && c.hardware_confirmed);
     CHECK(c.yaw_direction==1 && c.control.rate_pid[0].output_limit==0.3f);
+    CHECK(c.control.rate_pid[1].output_limit==DM4340_T_MAX);
+    CHECK(fabsf(c.control.rate_pid[1].integral_limit-0.9f*DM4340_T_MAX)<0.01f);
     /* Preserve coverage of the optional Pitch-only commissioning mode. */
     c.pitch_only=true;
+    /* Keep the legacy 2 N m wall in this scenario: the stall-window and
+     * holding-torque timings below are calibrated around it. The production
+     * cap is covered by the dedicated case at the end of main. */
+    c.control.rate_pid[1].output_limit=2.0f;
+    c.control.rate_pid[1].integral_limit=1.8f;
     CHECK(GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
     unsigned yaw_enable_before=enables[0], yaw_control_before=controls[0];
     cmd.arm=false; step(20,true); cmd.arm=true; step(5,true); step(5,true);
@@ -167,7 +174,7 @@ int main(void)
     cmd.pitch=1; cmd.yaw=1; p.last_rx_ms=now; ++p.rx_count; step(5,true);
     CHECK(torque[1]<0 && s.output.torque[0]==0);
     CHECK(enables[0]==yaw_enable_before && controls[0]==yaw_control_before);
-    /* Integral can reach the new cap before the bounded stall window expires. */
+    /* Integral can reach the legacy 2 N m cap before the bounded stall window expires. */
     for (unsigned i=0;i<1000 && torque[1]>-1.95f;++i) {
         p.motor.pos=GIMBAL_PITCH_ZERO; p.motor.vel=0;
         p.last_rx_ms=now; ++p.rx_count; step(5,true);
@@ -231,6 +238,30 @@ int main(void)
     CHECK(s.state==GIMBAL_STOPPED && s.fault==GIMBAL_FEEDBACK);
     c.pitch_stall_ms=0;
     CHECK(!GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
+    /* Production config: the removed Pitch torque cap lets the rate loop
+     * command well beyond the old 2 N m commissioning limit. A heavy axis is
+     * simulated by freezing the joint; sustained command builds integral past
+     * -2 N m while the commanded torque stays inside the DM4340 MIT range. */
+    init(); c=GimbalSetup_Config();
+    CHECK(GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
+    cmd=(RobotCommand){.remote_valid=true};
+    cmd.arm=false; step(20,true);
+    cmd.arm=true; step(5,true); step(5,true); /* preload + enable */
+    y=(YawMotor_Feedback){.received=true,.scaled=true,.state=1,
+        .last_rx_ms=now,.rx_count=1};
+    p=(PitchMotor_Feedback){.received=true,.last_rx_ms=now,.rx_count=1,
+        .motor={.pos=GIMBAL_PITCH_ZERO,.state=1}};
+    step(5,true); CHECK(s.state==GIMBAL_ACTIVE);
+    cmd.pitch=1;
+    float peak=0;
+    for (unsigned i=0;i<1200;++i) {
+        y.last_rx_ms=now; ++y.rx_count;
+        p.last_rx_ms=now; ++p.rx_count;
+        step(5,true);
+        CHECK(s.state==GIMBAL_ACTIVE);
+        if (torque[1]<peak) peak=torque[1];
+    }
+    CHECK(peak<-2.0f && peak>=-DM4340_T_MAX);
     c=GimbalSetup_Config(); c.pitch_stall_travel=NAN;
     CHECK(!GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
     return 0;

@@ -3,8 +3,11 @@
 #include "gimbal_drive.h"
 
 /* Fill from the actual motors and measured joint travel, then set to 1.
- * Protocol ranges are NOT mechanical travel or working torque limits.
- * Both motors must be MIT, and Pitch PMAX/VMAX/TMAX must match dm4340_drv.h.
+ * Protocol ranges are NOT mechanical travel limits. The Pitch working torque
+ * cap was intentionally removed and now equals the DM4340 MIT mapping maximum,
+ * so DM4340_T_MAX is the only hard torque limit left (the motor's own TMAX
+ * setting still applies). Both motors must be MIT, and Pitch PMAX/VMAX/TMAX
+ * must match dm4340_drv.h.
  * Configure each motor's own command-loss timeout before hardware operation. */
 #define GIMBAL_HARDWARE_CONFIRMED 1
 /* User-authorized low-torque dual-axis test; Yaw CCW direction verified. */
@@ -53,11 +56,18 @@
 #define GIMBAL_YAW_ZERO 0.0f
 #define GIMBAL_YAW_ZERO_CONFIRMED 0
 
-/* Next commissioning step after measured 1 N m stall. Not hardware-validated. */
-#define GIMBAL_PITCH_TORQUE_LIMIT 2.0f
+/* User reported that the 2 N m commissioning cap still cannot raise the
+ * barrel and asked to remove the torque cap. The rate loop may now command up
+ * to the motor MIT mapping maximum; the integral contribution is scaled with
+ * it (0.9x) instead of clamping the steady-state holding torque near 2 N m.
+ * Joint limits, outward-torque blocking, the loaded-stall stop and the
+ * command/feedback watchdogs remain active. The stall detector compares
+ * against this same output limit, so it now only triggers near the motor
+ * maximum. Hold the emergency stop ready during the first loaded test. */
+#define GIMBAL_PITCH_TORQUE_LIMIT DM4340_T_MAX
 #define GIMBAL_PITCH_SPEED_KP 2.0f
 #define GIMBAL_PITCH_SPEED_KI 2.0f
-#define GIMBAL_PITCH_INTEGRAL_LIMIT 1.8f
+#define GIMBAL_PITCH_INTEGRAL_LIMIT (0.9f * DM4340_T_MAX)
 #define GIMBAL_PITCH_STALL_MS 1000U
 #define GIMBAL_PITCH_STALL_TRAVEL 0.005f
 #define GIMBAL_PITCH_STALL_ERROR 0.05f
