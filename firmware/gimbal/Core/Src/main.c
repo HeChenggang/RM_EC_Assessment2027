@@ -31,6 +31,8 @@
 #include "bmi088.h"
 #include "gimbal_board.h"
 #include "pitch_motor.h"
+#include "yaw_motor.h"
+#include "gimbal_setup.h"
 #include "board_link.h"
 #include <string.h>
 /* USER CODE END Includes */
@@ -69,12 +71,18 @@ volatile uint16_t yaw_velocity_raw;
 volatile uint16_t yaw_torque_raw;
 volatile uint8_t yaw_motor_state;
 volatile bool yaw_online;
+YawMotor_Feedback yaw_feedback;
+YawMotor_Params yaw_params;
+volatile HAL_StatusTypeDef yaw_query_status = HAL_ERROR;
+static uint32_t yaw_query_ms;
 static LinkReceiver command_rx;
 RobotCommand board_command;
 volatile bool board_link_online;
 volatile uint32_t board_command_count;
 static volatile uint32_t watchdog_generation;
 static uint32_t watchdog_consumed;
+GimbalDrive gimbal_drive;
+volatile bool gimbal_configured;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -160,12 +168,21 @@ int main(void)
   MX_TIM10_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
-  /* Receive only at application level; no motor enable or control frames.
-   * Confirm the physical motor's mode before calling any command API. */
+  /* Hardware confirmation in gimbal_setup.h gates all enable/torque output. */
   pitch_init_status = PitchMotor_Init(&hcan2, DM4340_MIT_MODE);
   (void)Link_Init(&command_rx, LINK_COMMAND, 20U, 100U);
-  yaw_init_status = StartYawFeedback();
+  const YawMotor_Ranges yaw_ranges = {
+    GIMBAL_YAW_PMAX, GIMBAL_YAW_VMAX, GIMBAL_YAW_TMAX
+  };
+  yaw_init_status = YawMotor_Init(&hcan1,
+      GIMBAL_YAW_PROTOCOL_CONFIRMED ? &yaw_ranges : NULL);
+  if (yaw_init_status == HAL_OK) yaw_init_status = StartYawFeedback();
   imu_init_status = BMI088_Init(&hspi1);
+  GimbalDriveConfig drive_config = GimbalSetup_Config();
+  drive_config.hardware_confirmed = drive_config.hardware_confirmed &&
+      pitch_init_status == HAL_OK && yaw_init_status == HAL_OK;
+  gimbal_configured = GimbalDrive_Init(&gimbal_drive, &drive_config,
+                                      &hcan1, &hcan2, HAL_GetTick());
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -189,8 +206,19 @@ int main(void)
     }
     (void)PitchMotor_GetFeedback(&pitch_feedback);
     pitch_online = PitchMotor_IsOnline(100U);
-    yaw_online = yaw_rx_count != 0U &&
-        (uint32_t)(HAL_GetTick() - yaw_last_rx_ms) < 100U;
+    YawMotor_ParamService(board_link_online && board_command.remote_valid && !board_command.arm);
+    YawMotor_GetParams(&yaw_params);
+    (void)YawMotor_GetFeedback(&yaw_feedback);
+    yaw_online = YawMotor_IsOnline(100U);
+    GimbalDrive_Step(&gimbal_drive, &board_command, board_link_online,
+                     &yaw_feedback, &pitch_feedback, HAL_GetTick());
+    /* Low-rate read-only feedback requests after stop/drive processing.
+     * Do not compete with enable/torque traffic while armed. */
+    if (board_link_online && board_command.remote_valid && !board_command.arm &&
+        yaw_params.finished && (uint32_t)(HAL_GetTick()-yaw_query_ms) >= 100U) {
+      yaw_query_ms = HAL_GetTick();
+      yaw_query_status = YawMotor_RequestFeedback();
+    }
     if (imu_init_status == HAL_OK)
     {
       (void)BMI088_Service();
@@ -266,9 +294,11 @@ void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef *hcan)
       }
       continue;
     }
+    if (YawMotor_ReceiveParam(&header, data)) continue;
     if (header.IDE != CAN_ID_STD || header.RTR != CAN_RTR_DATA ||
         header.StdId != GIMBAL_YAW_RX_ID || header.DLC != 8U ||
         (data[0] & 0x0FU) != GIMBAL_YAW_TX_ID) continue;
+    (void)YawMotor_Receive(&header, data);
     yaw_motor_state = data[0] >> 4;
     yaw_position_raw = (uint16_t)((data[1] << 8) | data[2]);
     yaw_velocity_raw = (uint16_t)((data[3] << 4) | (data[4] >> 4));

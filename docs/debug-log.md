@@ -28,3 +28,82 @@
 - 初步落地参数调整为转子上限 400 rpm、原始电流上限 ±2000、Kp=10；平移指令上限仍为 0.20 m/s，保持急停、失联、反馈过期和回中使能保护。
 - Debug 构建与控制逻辑测试通过；备份 `tmp/before-floor-tuning.bin` 后烧录，53868 字节校验通过，记录为 `tmp/install-floor-tuning.log`。
 - 烧录后初始化成功，遥控在线、四轮反馈在线，处于 DISARMED、输出零；需要重新回中使能。新参数下的落地移动效果待用户验证。
+
+## 2026-11-15：Pitch 实机被动反馈检查
+
+- J-Link/SWD 连接云台板；回读 Flash 前 64 KiB，其中 38932 字节与当前云台 Debug 二进制完全一致，未烧录或发送电机控制命令。
+- Pitch 离线测试通过。实机 pitch_init_status=HAL_OK，CAN2 ESR=0，FIFO1 无待取帧。
+- 多次读取 pitch_feedback 全零，rx_count=0、received=false、pitch_online=false；延长观察超过 3 秒后仍未收到有效反馈，系统 tick 持续递增。
+- 结论：当前仅接收状态下未观察到 CAN2 / 0x19 / 载荷 ID 9 的有效 Pitch 反馈，不能确认电机反馈正常，也不能据此认定电机损坏。尚未验证主动请求后的应答，应进一步核实电机供电、接线、ID、波特率与反馈触发方式。
+- 原始记录：tmp/pitch-identify.log、tmp/pitch-feedback.log、tmp/pitch-feedback-long.log、tmp/pitch-feedback-final.log。
+
+## 2026-11-15：遥控 Pitch / Yaw 控制接入
+
+- 保留工作区现有 Yaw 驱动改动，新增 GimbalDrive 并接入云台主循环，沿用底盘板间命令和右拨杆使能映射。
+- 两轴零力矩预装后发送使能，300 ms 内要求两轴新的已使能反馈；200 Hz 关节角/速度闭环。首次目标取当前反馈，Pitch 使用显式标定零位与机械限位。
+- 急停、100 ms 断链/反馈过期、异常状态、超限或发送失败均停止两轴，取消待发旧命令，每 20 ms 重试失能；故障后必须重新回中、中位→上位使能。
+- 配置位于 config/gimbal_setup.h。Yaw 实机量程、两电机 MIT 模式、Pitch 零位/限位和方向仍待确认，GIMBAL_HARDWARE_CONFIRMED 保持 0。当前构建不能遥控使能，未烧录或进行运动验证。
+- 11 组离线测试通过，新增使能应答、旧反馈拒绝、单轴应答不足、发送错误、失能重试、断链、限位、禁止自动恢复和时钟回绕检查。最终云台 Debug/Release 均构建通过。
+- 实机操作与参数说明见 firmware/gimbal/README.md 的“遥控双轴控制”。电机自身通信超时须实测，CAN 断线时不能以软件失能重试代替电机侧保护。
+
+## 2026-11-15：录入 Pitch 实测标定
+
+- 用户提供 pitch_feedback.motor.pos：零位 -0.184、上限 -1.143、下限 0.043 rad。
+- gimbal_setup.h 中采用抬头为正，方向 -1，关节角 = -0.184 - 原始反馈角；关节限位为 [-0.227, 0.959] rad。位置、速度和力矩沿用同一方向适配。
+- 实际标定的零位方向、上下限外向输出抑制和越界停止测试通过；云台 Debug/Release 构建通过。
+- Yaw 量程、方向及两电机 MIT 模式/协议量程仍待确认，运动保护保持开启，本次未烧录。
+
+## 2026-11-15：用户要求 Pitch 单轴遥控试车
+
+- 新增 GIMBAL_PITCH_ONLY_TEST=1，Pitch 使用现有 MIT 驱动和用户实测标定；Yaw 不使能、不发送运动帧，Yaw 缺失反馈不阻断 Pitch。回中重新使能、反馈确认、急停、断链与力矩限幅继续有效。
+- 原板完整 1 MiB Flash 备份至 tmp/before-pitch-remote.bin。首次单轴固件 51148 字节烧录及逐字节校验成功，gimbal_configured=1，遥控急停，Pitch 保持失能；反馈计数 263→273，CAN2 ESR=0。
+- 观察到 Pitch 位于下限约 0.043 rad；添加 0.001 rad 端点测量容差，保持目标限位及向外输出禁止。单轴隔离、下限容差、越界停机测试与 Debug/Release 构建通过。
+- 最终 51264 字节版本重烧时 J-Link/DAP 通信失败，未完成烧录准备及校验；重新连接同样失败，无法确认当前运行状态。需恢复 J-Link 后重新烧录与回读，不能视为最终版本已部署。
+- 记录：tmp/install-pitch-remote.log、tmp/pitch-reconnect.log。恢复连接后，右拨杆中→上使能，右摇杆向前抬头，下拨急停；该使能拨杆也影响底盘，应保持左摇杆回中。
+- 用户恢复 J-Link 后，以 SWD 1 MHz 重新下载检查：Flash 已与最终版本一致，51264 字节逐字节校验成功并复位运行。gimbal_configured=1，遥控有效且处于急停，Pitch state=0（失能），反馈计数 342→353，CAN2 ESR=0。等待用户回中、中→上使能后测试抬头，尚未确认实际抬头效果。最终记录：tmp/install-pitch-remote-final.log、tmp/pitch-remote-final-state.log。
+
+## 2026-11-15：Pitch 无法抬头排查与速度环积分
+
+- 初读遥控 pitch=1、arm=true，但状态 STOPPED、ready=false、电机失能。请用户回中、中位保持→上位保持后，采样进入 ACTIVE、故障码 0，电机 state=1。
+- tmp/pitch-capture-arm.log 共 150 次采样，其中 110 次 ACTIVE 且抬头；原始位置约 0.04367～0.04377 rad 几乎不变，反馈力矩约 -0.09～-0.42 N·m，稳态命令约 -0.40 N·m。遥控和使能链路已正常，尚不能排除机械阻力。
+- 发现纯比例速度环 Kp=2、速度上限 0.2 rad/s，使静止时输出最多约 0.4 N·m，不能用到 1 N·m 限幅。加入 Ki=2、积分贡献上限 0.8 N·m，保留总输出 1 N·m、原速度/限位/失联保护。
+- 新增持续负载下输出能达到既有限幅的测试；云台测试及 Debug/Release 构建通过。先通过 configured=false 触发正常失能并回读 state=0，再烧录；51280 字节校验成功，重新运行后反馈持续增长、ESR=0，等待用户重新回中使能复测。
+- 记录 tmp/pitch-stop-for-tuning.log、tmp/install-pitch-pi.log、tmp/pitch-pi-state.log。实际抬头效果仍待复测，不将控制参数修正等同于已排除全部机械问题。
+
+## 2026-11-15：积分版仍不动，确认达到力矩上限
+
+- 用户再试后采集 tmp/pitch-pi-capture.log：200 次采样均为 ACTIVE、fault=0，其中 170 次有效饱和样本，命令力矩幅值 0.99977～1.0 N·m，电机反馈 -1.005～-1.019 N·m，原始位置固定约 0.0428083 rad，速度近零。
+- 已排除本次未使能、遥控未到达和输出达不到设定上限；负载需求超过当前输出或机械阻挡仍待区分，不能仅凭反馈认定机械故障或贸然提高力矩。
+- 通过运行时 configured=false 触发原停机路径，回读 STOPPED、Pitch state=0，停止持续堵转输出；未改变 Flash 参数。记录 tmp/pitch-stall-stop.log。重启会恢复原配置，当前需先确认机械状态再继续试车。
+- 已请用户右拨杆下位、托住云台检查手动抬升是否顺畅，等待结果后决定力矩调整或机械排障。
+
+## 2026-11-16：Pitch 负载参数与持续无位移保护（仅代码）
+
+- 用户确认可以顺畅手动抬起但较重，并明确要求先完成代码、不上板测试。本次未调用下载器、未连接板卡或修改板上固件。
+- 将下一档 Pitch 工作力矩设为 2 N·m，积分贡献上限 1.8 N·m，Kp/Ki 仍为 2/2，速度上限仍为 0.2 rad/s；参数集中在 gimbal_setup.h。只是待实测参数，不推断其必然足够抬头。
+- 新增 GIMBAL_STALL=8：目标误差至少 0.05 rad、输出达到工作力矩上限 90%，且 1000 ms 内位移不足 0.005 rad 时停止并清积分；位移进展刷新计时，小误差保持负载不误报。保护触发后需重新回中使能。
+- last_fault 保留最近一次停机事件的起因，解除使能不会覆盖，下一次使能尝试清除。保留原急停、断链、反馈过期、限位和 Yaw 隔离。
+- 新增/扩展离线测试覆盖 2 N·m 限幅、积分建立、持续无位移停机、带负载移动不误报、到位保持不误报、积分复位、故障保留、禁止自动恢复、计时回绕和无效保护参数。11 组测试全部通过，云台 Debug/Release 构建通过，git diff --check 通过。
+- 结构体布局已改变；后续实机验证须以新 ELF 查询符号地址，不沿用 tmp 下历史固定地址脚本。尚未进行 2 N·m 版本实机验证。
+
+## 2026-11-16 J-Link 云台运行检查
+
+J-Link CE 69405108，SWD 1 MHz，VTref 约 3.29 V。读取 Flash 与最新 Debug
+gimbal.bin 比较，52880 字节全部一致，未重复擦写。发现 main 入口硬件断点，
+清除该断点后恢复运行。非停机 RAM 快照：board_command_count、watchdog_generation、
+watchdog_consumed 均为 2363；remote_valid=1、arm=0。Yaw 参数 mode=1、
+PMAX=3.14159298、VMAX=21、TMAX=7.5，valid_mask=15、无超时。
+Yaw received=1、scaled=1、state=0、rx_count=1416，pos=-0.632345 rad、
+vel=-0.015385 rad/s、torque=-0.005495 N·m。云台 STOPPED、fault=0、
+configured/ready/stop_sent 均为 1，两轴发送状态 HAL_OK，控制输出为零。
+程序保持运行；尚未操作遥控器使能，也未验证实际运动和运动后的停机。
+
+用户打开使能后反馈平稳保持。J-Link 非停机快照确认 ACTIVE(3)、fault=0、last_fault=0、两轴 TX=HAL_OK，遥控四轴回中且 arm=1；Yaw state=1、pos=-0.632441 rad，目标=-0.632345 rad，位置差约 0.000096 rad。控制输出 Yaw 约 0.00513 N·m；板间/喂狗计数均为17165。静态保持通过，摇杆运动与失能停机仍待验证。
+
+2026-11-16：用户重新放置 Pitch 允许最低位置；J-Link 读取原始 pos=0.0503823757 rad、motor.state=0。更新 GIMBAL_PITCH_LOWER_RAW=0.0503824f，关节下限=-0.2343824 rad（原 -0.227 rad），上限不变。读取时遥控 arm=1，已提示先关闭使能并回中；仍保留重新使能保护。
+
+下限更新后的云台控制测试及 Debug/Release 构建通过；通过 J-Link 烧录 Debug HEX，并以 BIN 回读校验 52880 字节成功，复位恢复运行。
+
+2026-11-16 Yaw 启动吃力：运行快照 ACTIVE、无故障，摇杆回中，目标 -0.481754 rad、实际 -0.549509 rad，目标速度 0.203264 rad/s，输出 0.208392 N·m、反馈 0.203297 N·m，速度接近零。准备将速度比例 kp 从 1 增到 1.2，扭矩上限仍为 0.3 N·m，待失能后下载验证；该静态快照不足以排除机械摩擦或线束影响。
+
+用户关闭使能后，J-Link 确认两电机 state=0、arm=0；烧录 kp=1.2 的 Debug 固件并回读校验 52884 字节成功，复位运行。

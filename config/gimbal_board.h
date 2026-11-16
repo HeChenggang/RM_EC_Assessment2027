@@ -11,6 +11,6 @@
 #define GIMBAL_PITCH_RX_ID       0x19U
 #define GIMBAL_BOARD_LINK_CAN_BUS 1U
 
-/* No motor enable/control is implemented by the board bring-up firmware. */
+/* Remote actuation and commissioning interlock: gimbal_setup.h. */
 
 #endif

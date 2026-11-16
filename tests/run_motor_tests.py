@@ -6,6 +6,7 @@ termination or ACKs.
 
   python tests/run_motor_tests.py             # M3508/C620 CAN driver
   python tests/run_motor_tests.py --pitch     # DM4340 pitch component
+  python tests/run_motor_tests.py --gimbal    # Remote gimbal actuation and stop delivery
   python tests/run_motor_tests.py --remote    # DT7/DR16 receiver
   python tests/run_motor_tests.py --pid       # PID controller
   python tests/run_motor_tests.py --imu       # BMI088 IMU
@@ -27,9 +28,11 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 FW = ROOT / "firmware/chassis"
 # flag -> (module source without extension, test file, instruction budget)
 CASES = {
+    "--gimbal": ("gimbal/gimbal_drive", "test_gimbal_drive.c", 40000000),
     "--logic": ("control/robot_control", "test_robot_logic.c", 30000000),
     "--link": ("communication/board_link", "test_board_link.c", 10000000),
     "--attitude": ("imu/attitude", "test_attitude.c", 100000000),
+    "--yaw": ("motor/yaw_motor", "test_yaw_motor.c", 2000000),
     "--pitch": ("motor/pitch_motor", "test_pitch_motor.c", 2000000),
     "--motor": ("motor/m3508_can", "test_m3508_can.c", 1000000),
     "--remote": ("remote/dr16", "test_dr16.c", 1000000),
@@ -46,6 +49,7 @@ if len(sys.argv) > 2 or (len(sys.argv) == 2 and sys.argv[1] not in CASES):
 SELECTED = sys.argv[1] if len(sys.argv) == 2 else "--motor"
 MODULE, TEST, BUDGET = CASES[SELECTED]
 EXTRA = {
+    "--gimbal": ["gimbal/gimbal_control", "control/pid", "control/motion_math", "remote/command"],
     "--pitch": ["motor/dm4340_drv"],
     "--logic": ["control/pid", "control/motion_math", "remote/command", "safety/safety_gate",
                 "chassis/mecanum", "chassis/chassis_control", "gimbal/gimbal_control",
