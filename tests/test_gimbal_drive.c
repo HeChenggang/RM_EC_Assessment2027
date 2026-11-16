@@ -86,7 +86,7 @@ int main(void)
     arm(); CHECK(s.state==GIMBAL_ACTIVE && s.fault==GIMBAL_OK);
     CHECK(fabsf(s.output.target[1])<0.0001f); /* calibrated offset */
     cmd.yaw=1; cmd.pitch=1; feedback(1); step(5,true);
-    CHECK(torque[0]>0 && torque[1]>0 && torque[0]<=0.3f && torque[1]<=1);
+    CHECK(torque[0]>0 && torque[1]>0 && torque[0]<=GIMBAL_YAW_TORQUE_LIMIT && torque[1]<=1);
     free_tx[0]=free_tx[1]=0;
     unsigned old_aborts=aborts, old_disable=disables[0];
     cmd.estop=true; step(1,true);
@@ -182,7 +182,7 @@ int main(void)
     CHECK(!Gimbal_Step(&calibrated,&cmd,&f,true,0.005f,&out));
     init(); c=GimbalSetup_Config();
     CHECK(!c.pitch_only && c.hardware_confirmed);
-    CHECK(c.yaw_direction==1 && c.control.rate_pid[0].output_limit==0.3f);
+    CHECK(c.yaw_direction==1 && c.control.rate_pid[0].output_limit==GIMBAL_YAW_TORQUE_LIMIT);
     CHECK(c.control.rate_pid[1].output_limit==DM4340_T_MAX);
     CHECK(fabsf(c.control.rate_pid[1].integral_limit-0.9f*DM4340_T_MAX)<0.01f);
     /* Preserve coverage of the optional Pitch-only commissioning mode. */

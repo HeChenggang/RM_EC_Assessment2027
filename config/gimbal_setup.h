@@ -76,8 +76,10 @@
 #define GIMBAL_PITCH_STALL_TRAVEL 0.005f
 #define GIMBAL_PITCH_STALL_ERROR 0.05f
 
-/* Small Yaw P-gain step after measured static tracking lag; torque cap unchanged. */
+/* Yaw speed-loop tuning. The working torque cap is in N m. */
 #define GIMBAL_YAW_SPEED_KP 1.2f
+#define GIMBAL_YAW_TORQUE_LIMIT 0.45f
+#define GIMBAL_YAW_MAX_RATE 1.00f /* rad/s, full-stick heading rate and outer-loop limit */
 
 /* Conservative initial gains in N m; not final tuned gains. */
 static inline GimbalDriveConfig GimbalSetup_Config(void)
@@ -87,7 +89,8 @@ static inline GimbalDriveConfig GimbalSetup_Config(void)
         .spin_hardware_confirmed=GIMBAL_IMU_MOUNT_CONFIRMED && GIMBAL_YAW_ZERO_CONFIRMED,
         .follow_hardware_confirmed=GIMBAL_IMU_MOUNT_CONFIRMED && GIMBAL_YAW_ZERO_CONFIRMED,
         .hardware_confirmed=GIMBAL_PITCH_ONLY_TEST || (GIMBAL_HARDWARE_CONFIRMED &&
-            GIMBAL_YAW_PMAX > 0 && GIMBAL_YAW_VMAX > 0 && GIMBAL_YAW_TMAX >= 0.3f),
+            GIMBAL_YAW_PMAX > 0 && GIMBAL_YAW_VMAX > 0 &&
+            GIMBAL_YAW_TMAX >= GIMBAL_YAW_TORQUE_LIMIT),
         .pitch_zero=GIMBAL_PITCH_ZERO,
         .pitch_stall_ms=GIMBAL_PITCH_STALL_MS,
         .pitch_stall_travel=GIMBAL_PITCH_STALL_TRAVEL,
@@ -95,11 +98,11 @@ static inline GimbalDriveConfig GimbalSetup_Config(void)
         .yaw_direction=GIMBAL_YAW_DIRECTION, .pitch_direction=GIMBAL_PITCH_DIRECTION,
         .control={.pitch_min=GIMBAL_PITCH_MIN, .pitch_max=GIMBAL_PITCH_MAX,
             .spin_max_time=GIMBAL_SPIN_MAX_TIME_S, .spin_max_travel=GIMBAL_SPIN_MAX_TRAVEL_RAD,
-            .yaw_command_rate=0.3f, .pitch_command_rate=0.2f,
-            .angle_kp={3,3}, .max_dt=0.02f, .max_rate={0.3f,0.2f},
+            .yaw_command_rate=GIMBAL_YAW_MAX_RATE, .pitch_command_rate=0.2f,
+            .angle_kp={3,3}, .max_dt=0.02f, .max_rate={GIMBAL_YAW_MAX_RATE,0.2f},
             .pitch_hold_kp=GIMBAL_PITCH_HOLD_KP,
             .space={GIMBAL_YAW_WORLD ? GIMBAL_WORLD : GIMBAL_JOINT, GIMBAL_JOINT},
-            .rate_pid={{.kp=GIMBAL_YAW_SPEED_KP,.output_limit=0.3f,.max_dt=0.02f},
+            .rate_pid={{.kp=GIMBAL_YAW_SPEED_KP,.output_limit=GIMBAL_YAW_TORQUE_LIMIT,.max_dt=0.02f},
                        {.kp=GIMBAL_PITCH_SPEED_KP,.ki=GIMBAL_PITCH_SPEED_KI,
                         .integral_limit=GIMBAL_PITCH_INTEGRAL_LIMIT,
                         .output_limit=GIMBAL_PITCH_TORQUE_LIMIT,.max_dt=0.02f}}}};
