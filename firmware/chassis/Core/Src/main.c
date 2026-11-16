@@ -201,7 +201,8 @@ static bool InitChassisControl(void)
   ChassisConfig config = {
     .geometry = MECANUM_DEFAULT_CONFIG,
     .max_translation = CHASSIS_TRANSLATION_LIMIT_MPS,
-    .max_rotation = 1.0f, .spin_rate = 0.5f, .follow_kp = 1.0f,
+    .max_rotation = CHASSIS_MAX_ROTATION_RAD_S,
+    .spin_rate = CHASSIS_SPIN_RATE_RAD_S, .follow_kp = 1.0f,
     .translation_accel = CHASSIS_TRANSLATION_ACCEL_MPS2,
     .rotation_accel = 1.0f, .max_dt = 0.025f
   };

@@ -29,7 +29,9 @@
  * instead of servoing the joint angle. Joystick yaw then rotates the world
  * heading while the chassis can turn underneath the gimbal, which is what the
  * chassis follow loop needs. Disabled until the attitude solution is validated:
- * a drifting or frozen world yaw makes the drive disarm (GIMBAL_FEEDBACK). */
+ * a drifting or frozen world yaw makes the drive disarm (GIMBAL_FEEDBACK).
+ * Do not enable this while relying on spin plan A: a world-locked gimbal makes
+ * the spin joint wind continuously, which needs plan B's timeout/limited turns. */
 #define GIMBAL_YAW_WORLD 0
 /* BMI088 sensor axes -> gimbal body axes (x forward, y left, z up). The
  * identity assumes the chip is mounted upright and aligned with the yaw plate;

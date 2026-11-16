@@ -37,6 +37,12 @@
 回传关节角状态，底盘用其中的 yaw 关节角作为云台相对底盘的偏角：分离与跟随按该角度
 做坐标变换，小陀螺以 0.5 rad/s 旋转并保留平移（整机随转）。
 
+小陀螺采用方案 A：整机绕自身中心旋转，云台 yaw 关节保持相对角、随底盘一起转，
+所以线束不会在 yaw 轴上持续缠绕，代价是云台视角跟着转。旋转速率在
+`firmware/chassis/Core/Inc/chassis_setup.h` 的 `CHASSIS_SPIN_RATE_RAD_S` 调整。
+方案 B（云台世界系锁定、底盘在下面转）留待后续，需要限时/限圈或滑环；它与
+`GIMBAL_YAW_WORLD` 绑定，开启前不要用方案 B 跑小陀螺，否则 yaw 关节会一直绕线。
+
 首次上车必须先标定云台零位：把云台摆到指向底盘正前方，读取
 `yaw_feedback.pos * GIMBAL_YAW_DIRECTION`，写入 `config/gimbal_setup.h` 的
 `GIMBAL_YAW_ZERO`，再把 `GIMBAL_YAW_ZERO_CONFIRMED` 置 1。未确认时状态帧

@@ -171,3 +171,19 @@ configured/ready/stop_sent 均为 1，两轴发送状态 HAL_OK，控制输出�
 - 待实机：BMI088 安装矩阵 `GIMBAL_IMU_SENSOR_TO_BODY`、陀螺零偏标定时间、
   世界 yaw 漂移速度、云台锁定世界朝向时的手感、底盘 follow 闭环整定（先把
   `CHASSIS_FOLLOW_IMU_READY` 置 1，低速小 `follow_kp` 起步）。
+## 2026-11-16：小陀螺方案 A 定稿（整机随转）
+
+- 决策：小陀螺先用方案 A——底盘以固定 `spin_rate` 整机旋转，云台 yaw 保持关节角随
+  底盘一起转。理由是现有关节控制下它已经能工作，线束不会在 yaw 轴上持续缠绕，满足
+  “保留非零旋转速度并支持平移”的验收字面要求；代价是云台视角跟着转。
+- 方案 B（云台世界系锁定、底盘在下面转）留到世界系验证之后，需要限时/限圈或滑环，
+  且与 `GIMBAL_YAW_WORLD` 绑定；开启前不能用 B 跑小陀螺，否则 yaw 关节会一直绕线。
+- 参数：`CHASSIS_SPIN_RATE_RAD_S=0.50`、`CHASSIS_MAX_ROTATION_RAD_S=1.0` 收到
+  `chassis_setup.h`，`InitChassisControl` 改用它，实机调参不必改 main。
+- 行为：spin 的 wz 不随相对 yaw 变化；平移仍按相对 yaw 旋转（摇杆前推时整机边走边
+  转，轨迹是圆弧）。spin 不要求 yaw 有效，但要求状态帧新鲜；`GIMBAL_YAW_ZERO` 未
+  标定时 spin 仍可动，只是平移按底盘系解释。
+- 测试：`test_robot_logic.c` 的 spin 用例改为相对 yaw=3 rad、连跑 60 步，断言
+  `wz=spin_rate` 且 `vx/vy` 等于按 3 rad 旋转后的平移，覆盖“旋转与平移解耦”。
+- 待实机：转向正负（正 wz 应为俯视逆时针）、0.5 rad/s 下的平移手感、轮速是否饱和、
+  急停/断链时旋转立即归零。

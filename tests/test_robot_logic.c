@@ -126,8 +126,13 @@ int main(void)
     for (unsigned i = 0; i < 30; ++i) CHECK(Robot_Step(&robot, &in, &out));
     CHECK(NEAR(out.chassis.velocity.wz, 1, 1e-5f));
     CHECK(NEAR(out.chassis.velocity.vx, 2*cosf(0.5f), 1e-5f));
-    in.command.mode = MODE_SPIN; in.relative_yaw = -1;
-    CHECK(Robot_Step(&robot, &in, &out) && out.chassis.velocity.wz > 0);
+    /* Plan A: spin is a fixed chassis rotation, independent of the relative
+       yaw; translation still rotates with the gimbal joint angle. */
+    in.command.mode = MODE_SPIN; in.relative_yaw = 3.0f;
+    for (unsigned i = 0; i < 60; ++i) CHECK(Robot_Step(&robot, &in, &out));
+    CHECK(NEAR(out.chassis.velocity.wz, 1, 1e-5f));
+    CHECK(NEAR(out.chassis.velocity.vx, 2*cosf(3.0f), 1e-5f));
+    CHECK(NEAR(out.chassis.velocity.vy, 2*sinf(3.0f), 1e-5f));
     in.command.mode = MODE_SEPARATE;
     for (unsigned i = 0; i < 30; ++i) CHECK(Robot_Step(&robot, &in, &out));
     CHECK(NEAR(out.chassis.velocity.wz, 0, 1e-5f));
