@@ -63,7 +63,6 @@
 volatile HAL_StatusTypeDef imu_init_status = HAL_ERROR;
 volatile bool imu_online = false;
 BMI088_Sample imu_sample;
-BMI088_GyroCalibration imu_calibration;
 volatile HAL_StatusTypeDef pitch_init_status = HAL_ERROR;
 volatile bool pitch_online = false;
 PitchMotor_Feedback pitch_feedback;
@@ -94,13 +93,11 @@ static uint8_t status_sequence;
 volatile uint32_t status_sent_count;
 GimbalDrive gimbal_drive;
 volatile bool gimbal_configured;
-/* World-frame yaw from the onboard IMU, used only when GIMBAL_YAW_WORLD is 1.
- * The attitude is relative (no magnetometer): yaw zero is the heading at the
- * first stationary sample and it drifts, which is acceptable for a hold loop. */
+/* Relative yaw for checking the IMU mounting and, once confirmed, for control.
+ * With no magnetometer, the initial heading defines zero and yaw can drift. */
 static Attitude attitude;
 static AttitudeOutput attitude_out;
 static uint32_t attitude_last_ms;
-static uint32_t imu_calibration_retry_ms;
 volatile bool attitude_ready;
 volatile float attitude_world_yaw;
 volatile float attitude_world_rate;
@@ -306,21 +303,19 @@ int main(void)
     {
       const bool new_gyro = BMI088_Service();
       imu_online = BMI088_GetSample(&imu_sample);
-      BMI088_GetGyroCalibration(&imu_calibration);
-      if (!imu_calibration.calibrated) {
-        /* Attitude needs a bias-free gyro. Arm a stationary window once per
-         * second while disarmed; a window taken while moving is rejected. */
+      const uint32_t now = HAL_GetTick();
+      if (!imu_online || imu_sample.accel_updates == 0U ||
+          (uint32_t)(now - imu_sample.last_accel_ms) > BMI088_TIMEOUT_MS) {
+        if (attitude_last_ms != 0U) Attitude_Reset(&attitude);
+        attitude_last_ms = 0U;
         attitude_ready = false;
         gimbal_drive.world_received = false;
-        if (!imu_calibration.running && !board_command.arm &&
-            (uint32_t)(HAL_GetTick()-imu_calibration_retry_ms) >= 1000U) {
-          imu_calibration_retry_ms = HAL_GetTick();
-          (void)BMI088_StartGyroCalibration(BMI088_CALIBRATION_SAMPLES);
-        }
       } else if (new_gyro && attitude_last_ms != 0U) {
-        const uint32_t elapsed = HAL_GetTick()-attitude_last_ms;
-        attitude_last_ms = HAL_GetTick();
+        const uint32_t elapsed = imu_sample.last_gyro_ms - attitude_last_ms;
+        attitude_last_ms = imu_sample.last_gyro_ms;
         if (elapsed != 0U) {
+          /* BMI088 reports nominally scaled rates with zero bias until a
+           * calibration is run. Use that default for the mounting check. */
           const float gyro[3] = {
             imu_sample.gyro_dps[0]*0.01745329252f,
             imu_sample.gyro_dps[1]*0.01745329252f,
@@ -330,9 +325,9 @@ int main(void)
             attitude_ready = true;
             attitude_world_yaw = attitude_out.yaw;
             attitude_world_rate = attitude_out.euler_rate[2];
-            if (GIMBAL_YAW_WORLD || GIMBAL_IMU_MOUNT_CONFIRMED)
+            if (GIMBAL_IMU_MOUNT_CONFIRMED)
               GimbalDrive_SetWorld(&gimbal_drive, attitude_out.yaw,
-                                   attitude_out.euler_rate[2], HAL_GetTick());
+                                   attitude_out.euler_rate[2], imu_sample.last_gyro_ms);
           } else {
             /* A gap or bad sample immediately invalidates world feedback. */
             attitude_ready = false;
@@ -340,7 +335,7 @@ int main(void)
           }
         }
       } else if (new_gyro) {
-        attitude_last_ms = HAL_GetTick();
+        attitude_last_ms = imu_sample.last_gyro_ms;
       }
     }
   }

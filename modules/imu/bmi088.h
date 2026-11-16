@@ -15,9 +15,24 @@ extern "C" {
 
 /* Gyro samples averaged for the zero-rate bias. At 1 kHz this is one second. */
 #define BMI088_CALIBRATION_SAMPLES 1000U
-/* Peak-to-peak spread allowed inside the calibration window. A chassis that is
- * touched or moved exceeds this and the bias is rejected instead of applied. */
-#define BMI088_CALIBRATION_MAX_SPREAD_DPS 2.0f
+/* Motion rejection for the calibration window. Two statistics are checked
+ * because they fail in different ways:
+ *
+ *  - drift (BMI088_CALIBRATION_MAX_DRIFT_DPS) is the real gate: the difference
+ *    between the mean of the first and of the second half of the window. For a
+ *    stationary board (0.014 dps/sqrt(Hz), 230 Hz filter -> sigma ~0.27 dps)
+ *    each half mean has sigma ~0.27/sqrt(500), so the difference is ~0.02 dps.
+ *    One isolated bad sample only moves it by glitch/(N/2). A constant rotation
+ *    of r dps moves it by r, which is exactly what a peak-to-peak test misses.
+ *
+ *  - spread (peak-to-peak) is an extreme-value statistic: it is set by the
+ *    single worst sample out of N, and white noise alone reaches
+ *    2*sigma*sqrt(2*ln(N)) ~ 2 dps for 1000 samples. A real board measured
+ *    4.5 dps while standing still, so peak-to-peak cannot be the motion limit;
+ *    it stays as a corruption guard at 20 dps, ~10x the stationary value, and
+ *    only trips on a bus error or bit-flip storm. */
+#define BMI088_CALIBRATION_MAX_SPREAD_DPS 20.0f
+#define BMI088_CALIBRATION_MAX_DRIFT_DPS 1.0f
 /* Data-ready silence after which the sample counts as stale. */
 #define BMI088_TIMEOUT_MS 20U
 
@@ -41,7 +56,12 @@ typedef struct {
     uint16_t collected;
     uint16_t target;
     float bias_dps[3];
-    float spread_dps; /* Peak-to-peak of the window, worst axis. */
+    float spread_dps; /* Peak-to-peak of the window, worst axis: diagnostic. */
+    float drift_dps;  /* Mean(second half) - mean(first half), worst axis: the
+                       * motion statistic the accept/reject decision uses. */
+    uint32_t window_ms; /* Diagnostic: wall time the window really took. Much
+                         * more than target/ODR means samples were dropped
+                         * because the main loop runs slower than data ready. */
 } BMI088_GyroCalibration;
 
 /* Configures both dies over SPI1 and verifies their chip IDs. Blocking for about

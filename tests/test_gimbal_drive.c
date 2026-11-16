@@ -37,6 +37,8 @@ static GimbalDriveConfig config(void)
     /* Synthetic calibrated test rig, not defaults for the physical robot. */
     c.hardware_confirmed=true;
     c.pitch_only=false;
+    c.follow_hardware_confirmed=false;
+    c.spin_hardware_confirmed=false;
     c.control.pitch_min=-0.4f; c.control.pitch_max=0.4f;
     c.pitch_zero=0.5f;
     c.pitch_direction=1;

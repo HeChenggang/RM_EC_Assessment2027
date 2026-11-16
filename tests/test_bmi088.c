@@ -205,6 +205,31 @@ int main(void)
     CHECK(calibration.spread_dps > 90.0f);
     CHECK_NEAR(calibration.bias_dps[0], 10.0f, 0.1f);
 
+    /* One isolated bad sample is a spike, not motion: it must not throw the
+     * bias away, because the mean moves by glitch/N while peak-to-peak jumps by
+     * the whole glitch. */
+    CHECK(BMI088_StartGyroCalibration(100));
+    for (unsigned i = 0; i < 100U; ++i) {
+        feed_gyro((i == 37U) ? 18.0f : 10.0f, -5.0f, 2.0f);
+    }
+    BMI088_GetGyroCalibration(&calibration);
+    CHECK(calibration.calibrated && !calibration.failed);
+    CHECK(calibration.spread_dps > 7.0f);
+    CHECK(calibration.drift_dps < BMI088_CALIBRATION_MAX_DRIFT_DPS);
+    CHECK_NEAR(calibration.bias_dps[0], 10.0f, 0.15f);
+
+    /* A slow steady rotation is invisible to peak-to-peak (the whole window only
+     * spans 5 dps) but the half means differ by half of it, and that bias error
+     * would leak into the yaw rate loop. */
+    CHECK(BMI088_StartGyroCalibration(100));
+    for (unsigned i = 0; i < 100U; ++i) {
+        feed_gyro((float)i * 0.05f, 0.0f, 0.0f);
+    }
+    BMI088_GetGyroCalibration(&calibration);
+    CHECK(calibration.failed);
+    CHECK(calibration.spread_dps < BMI088_CALIBRATION_MAX_SPREAD_DPS);
+    CHECK(calibration.drift_dps > 2.0f);
+
     /* Bus errors are counted, do not publish a sample and keep the driver usable. */
     const uint32_t errors = sample.spi_errors;
     spi_result = HAL_ERROR;

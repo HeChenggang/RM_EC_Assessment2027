@@ -85,6 +85,8 @@ static BMI088_GyroCalibration calibration;
 static float calibration_sum[3];
 static float calibration_min[3];
 static float calibration_max[3];
+static float calibration_half_sum[3];
+static uint32_t calibration_start_ms;
 
 static HAL_StatusTypeDef read_regs(const BMI088_Target *target, uint8_t reg,
                                    uint8_t *out, uint16_t length)
@@ -159,6 +161,9 @@ static void finish_calibration(void)
 {
     float bias[3];
     float spread = 0.0f;
+    float drift = 0.0f;
+    const uint16_t first = (uint16_t)(calibration.target / 2U);
+    const uint16_t second = (uint16_t)(calibration.target - first);
 
     for (unsigned axis = 0; axis < 3U; ++axis) {
         bias[axis] = calibration_sum[axis] / (float)calibration.collected;
@@ -166,10 +171,26 @@ static void finish_calibration(void)
         if (axis_spread > spread) {
             spread = axis_spread;
         }
+        if (first > 0U && second > 0U) {
+            const float first_mean = calibration_half_sum[axis] / (float)first;
+            const float second_mean =
+                (calibration_sum[axis] - calibration_half_sum[axis]) / (float)second;
+            const float axis_drift = second_mean > first_mean
+                                         ? second_mean - first_mean
+                                         : first_mean - second_mean;
+            if (axis_drift > drift) {
+                drift = axis_drift;
+            }
+        }
     }
     calibration.running = false;
     calibration.spread_dps = spread;
-    if (spread > BMI088_CALIBRATION_MAX_SPREAD_DPS) {
+    calibration.drift_dps = drift;
+    calibration.window_ms = HAL_GetTick() - calibration_start_ms;
+    /* Drift catches real motion, spike included in the mean or not; the
+     * peak-to-peak limit only catches data corruption (see bmi088.h). */
+    if (drift > BMI088_CALIBRATION_MAX_DRIFT_DPS ||
+        spread > BMI088_CALIBRATION_MAX_SPREAD_DPS) {
         /* Motion inside the window: keep whatever bias was valid before, report
          * the failure and let the caller decide whether to retry. */
         calibration.failed = true;
@@ -200,6 +221,14 @@ static void accumulate_calibration(const float dps[3])
             }
         }
         calibration_sum[axis] += dps[axis];
+    }
+    /* Snapshot the sum when the first half is complete: the difference of the
+     * half means is what the motion check needs, and it must survive the rest
+     * of the window without another pass. */
+    if (calibration.collected + 1U == (uint16_t)(calibration.target / 2U)) {
+        for (unsigned axis = 0; axis < 3U; ++axis) {
+            calibration_half_sum[axis] = calibration_sum[axis];
+        }
     }
     ++calibration.collected;
     if (calibration.collected >= calibration.target) {
@@ -376,10 +405,14 @@ bool BMI088_StartGyroCalibration(uint16_t samples)
     calibration.running = true;
     calibration.failed = false;
     calibration.spread_dps = 0.0f;
+    calibration.drift_dps = 0.0f;
+    calibration.window_ms = 0U;
+    calibration_start_ms = HAL_GetTick();
     for (unsigned axis = 0; axis < 3U; ++axis) {
         calibration_sum[axis] = 0.0f;
         calibration_min[axis] = 0.0f;
         calibration_max[axis] = 0.0f;
+        calibration_half_sum[axis] = 0.0f;
     }
     return true;
 }

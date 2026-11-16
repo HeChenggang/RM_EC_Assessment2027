@@ -21,11 +21,11 @@
    yaw 角速度方向、静态漂移后，设置 GIMBAL_IMU_MOUNT_CONFIRMED=1。
 2. 云台朝底盘正前方，测量 yaw_feedback.pos * GIMBAL_YAW_DIRECTION，填入
    GIMBAL_YAW_ZERO，并设置 GIMBAL_YAW_ZERO_CONFIRMED=1。
-3. 解除使能、保持静止，等待陀螺零偏标定和有效姿态更新。先验证云台抗扰方向及
+3. 保持待机，等 `attitude_ready=1`。先验证云台抗扰方向及
    现有 0.3 N·m Yaw 力矩能否跟踪，再进行低速底盘联调。
 
-两个确认位目前均为 0，小陀螺保持禁止。下板所有模式都要求有效的相对 yaw，
-不再在小陀螺中用 yaw=0 回退。跟随模式也由上板检查世界航向与标定状态，见 [跟随模式](follow-mode.md)。
+当前配置已确认 IMU 航向方向和 Yaw 关节零位，允许小陀螺使用世界航向。云台联调暂用
+三轴陀螺零偏 0 °/s，实机小陀螺待验证。下板所有模式都要求有效的相对 yaw。见 [跟随模式](follow-mode.md)。
 
 ## 停机与线束边界
 

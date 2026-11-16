@@ -34,28 +34,19 @@
 在 Ozone 观察 `remote_command`。其中 `arm` 是请求。
 
 底盘已接入左杆前后与横移的速度闭环。云台每 20 ms 通过板间 CAN 的 0x310..0x312
-回传关节角状态，底盘用其中的 yaw 关节角作为云台相对底盘的偏角：分离与跟随按该角度
-做坐标变换，小陀螺以 0.5 rad/s 旋转并保留平移（整机随转）。
-
-小陀螺采用方案 A：整机绕自身中心旋转，云台 yaw 关节保持相对角、随底盘一起转，
-所以线束不会在 yaw 轴上持续缠绕，代价是云台视角跟着转。旋转速率在
-`firmware/chassis/Core/Inc/chassis_setup.h` 的 `CHASSIS_SPIN_RATE_RAD_S` 调整。
-方案 B（云台世界系锁定、底盘在下面转）留待后续，需要限时/限圈或滑环；它与
-`GIMBAL_YAW_WORLD` 绑定，开启前不要用方案 B 跑小陀螺，否则 yaw 关节会一直绕线。
+回传关节角状态，底盘用其中的 Yaw 关节角进行平移坐标变换。小陀螺以 0.5 rad/s
+旋转，保留平移并用 IMU 保持云台世界航向，受累计时间和关节转角保护。见 [小陀螺模式](../docs/spin-mode.md)。
 
 首次上车必须先标定云台零位：把云台摆到指向底盘正前方，读取
 `yaw_feedback.pos * GIMBAL_YAW_DIRECTION`，写入 `config/gimbal_setup.h` 的
 `GIMBAL_YAW_ZERO`，再把 `GIMBAL_YAW_ZERO_CONFIRMED` 置 1。未确认时状态帧
-`calibrated=false`，底盘在分离/跟随会进入 FAULT；小陀螺不依赖 yaw，可先单独验证。
+`calibrated=false`，底盘进入 FAULT。
 
-跟随模式还要求云台 yaw 做世界系稳定，否则关节伺服会把相对角锁住，底盘会一直转到
-旋转上限。P0-2 骨架已接入世界系 yaw 但默认关闭：把 `config/gimbal_setup.h` 的
-`GIMBAL_YAW_WORLD` 置 1 后，yaw 轴改用 BMI088 姿态解算的世界 yaw 作反馈，底盘转向
-时云台保持世界朝向，关节角随之减小，跟随环才可能收敛。上电后需静止等待陀螺零偏
-标定完成；零偏未完成、姿态解算失败或世界角超过 30 ms 未更新时，云台会以
-`GIMBAL_FEEDBACK` 退出使能。无磁力计，世界 yaw 会缓慢漂移，长时间运行需重新标定。
-首次开启前必须核对 `GIMBAL_IMU_SENSOR_TO_BODY` 安装矩阵与实机安装方向一致。
-跟随档强制使用世界航向；上板确认 IMU 安装与 Yaw 零位且姿态反馈新鲜后才允许运行，见 [跟随模式](../docs/follow-mode.md)。
+云台联调暂用三轴陀螺零偏 0 °/s，由 BMI088 实测数据直接解算姿态。无磁力计，
+实际零偏会使世界 yaw 随时间漂移。核对 `GIMBAL_IMU_SENSOR_TO_BODY` 的轴序和正负方向后，
+通过 `GIMBAL_IMU_MOUNT_CONFIRMED` 允许世界航向反馈进入闭环。`GIMBAL_YAW_WORLD` 默认置 0，
+分离模式使用关节反馈。跟随和小陀螺使用世界航向，要求 IMU 安装与 Yaw 零位已确认且姿态反馈新鲜。
+姿态解算失败或世界角达到 30 ms 未更新时，使用世界航向的云台闭环会退出使能。见 [跟随模式](../docs/follow-mode.md)。
 状态帧丢失超过 100 ms、CRC/序号错误，或 yaw 单周期跳变超过 0.3 rad 时，
 底盘会退出使能，需要重新回中并使能。
 在 `firmware/chassis/Core/Inc/chassis_setup.h` 填写实测轮向（左前、左后、右后、右前）、

@@ -25,10 +25,10 @@
    再设置 GIMBAL_IMU_MOUNT_CONFIRMED=1。
 2. 将云台对准底盘正前方，读取 yaw_feedback.pos * GIMBAL_YAW_DIRECTION，填入
    GIMBAL_YAW_ZERO，再设置 GIMBAL_YAW_ZERO_CONFIRMED=1。
-3. 静止、解除使能等待零偏标定；先检查云台抗扰和底盘正负转向，再低速验证对齐及平移。
+3. 保持待机，等 `attitude_ready=1`；先检查云台抗扰和底盘正负转向，再低速验证对齐及平移。
 
-两个确认位当前均为 0，跟随档保持禁止；不需要修改 GIMBAL_YAW_WORLD。
-Pitch 单轴测试配置也拒绝跟随档。
+当前配置已确认 IMU 航向方向和 Yaw 关节零位，允许跟随档使用世界航向。云台联调暂用
+三轴陀螺零偏 0 °/s，实机跟随待验证。Pitch 单轴测试配置禁止跟随档。
 
 ## 故障与验证
 

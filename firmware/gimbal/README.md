@@ -59,10 +59,11 @@ DM 电机可能需要请求才返回反馈，未收到反馈并不单独证明�
 主循环只在收到新的完整命令且 remote_valid=true 后喂狗。坏帧、重复帧、
 电机反馈均不喂狗；无有效命令时仍约 802 ms 复位。失联时 board_command
 清零并置 estop。电机使能、关节闭环和失能重试已接入，实机参数仍待确认。
-世界系姿态控制已接上骨架：BMI088 陀螺零偏标定后由 `Attitude_Update` 解算世界
-yaw，`GIMBAL_YAW_WORLD=1` 时经 `GimbalDrive_SetWorld` 作为 yaw 轴反馈；该开关默认
-关闭，IMU 安装矩阵与实机一致性、零偏标定时间、世界角漂移均待实测。Pitch 实测
-标定仍待完成。
+云台 IMU 联调暂按三轴陀螺零偏 0 °/s 处理。BMI088 使用标称量程换算实测数据，
+收到新鲜的加速度及陀螺数据后即可开始姿态解算。调试器可观察 `attitude_ready`、
+`attitude_world_yaw`（rad）和 `attitude_world_rate`（rad/s）。静止时实际零偏仍可能
+造成 yaw 漂移。方向待实机核对，目前以单位矩阵解算。确认安装后才可通过
+`GIMBAL_IMU_MOUNT_CONFIRMED` 发布闭环反馈，`GIMBAL_YAW_WORLD` 选择分离模式的 yaw 反馈坐标系。
 视觉协议和 RX 接收方式也需随后实现。不得将任意 CAN 帧当成有效命令喂狗。
 
 重新由 CubeMX 生成后需复核：HAL/CMSIS 共用路径、自定义顶层 CMake、

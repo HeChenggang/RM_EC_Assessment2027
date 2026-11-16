@@ -221,3 +221,54 @@ configured/ready/stop_sent 均为 1，两轴发送状态 HAL_OK，控制输出�
   清空预算。IMU 失败立即废弃样本，30 ms 无更新停机；故障状态传播到下板。
 - 下板小陀螺不再允许未标定 yaw 回退。确认位保留 0，未烧录或实机验证。
 - 11 组离线测试及两板 Debug/Release 构建通过。详见 [小陀螺模式](spin-mode.md)。
+
+## 2026-11-16：IMU 零偏标定反复失败（阈值压在噪声峰峰值上）
+
+- 现象：`imu_calibration` 的 `running`/`failed` 约每 2 s 翻转一次，`collected` 涨到
+  1000 后归 0，`calibrated` 始终为 0。`main.c:310` 因此在未标定时强制
+  `attitude_ready=false`、`world_received=false`，世界系 yaw 整条链路不可用。
+- 机制：`finish_calibration` 唯一的拒绝路径是 `spread_dps > CALIBRATION_MAX_SPREAD_DPS`；
+  `failed` 只保留到下一次 `BMI088_StartGyroCalibration`（它清 `failed`/`collected`），
+  所以表现为两个标志来回跳。
+- 数值依据：BMI088 陀螺噪声密度约 0.014 dps/√Hz，0x10=0x01 为 230 Hz 滤波
+  （噪声带宽 ≈1.57×230≈361 Hz），σ≈0.27 dps；N=1000 个样本的峰峰值期望
+  `2σ√(2lnN)`≈2.0 dps，三轴取最大约 2.1 dps。原阈值 2.0 dps 正好等于静止噪声的
+  峰峰值，采满一窗却被判"被移动"是必然的。
+- 改动：`BMI088_CALIBRATION_MAX_SPREAD_DPS` 2.0→4.0（保留约 2 倍余量）；
+  `BMI088_GyroCalibration` 新增 `window_ms`，`StartGyroCalibration` 记录起点、
+  `finish_calibration` 结算实际耗时，用来区分"噪声"与"主循环慢到丢样本"。
+  README 同步写入阈值依据，以及想压得更紧时应改 0x10 带宽档而非收紧阈值。
+- 未改变的部分：均值估计本来就精确（1000 样本均值的标准误 ≈0.008 dps），峰峰值只是
+  粗糙的"动没动"探测器，且对匀速转动本来无感，所以放宽到 4 dps 不损失真正的运动检测
+  （手碰/被推会产生几十 dps 的尖峰）。
+- 测试：`python tmp/run_tests_sandbox.py --imu`、`--attitude` 通过。直接跑
+  `tests/run_motor_tests.py` 在 DSH 沙箱内会因 `tempfile.mkdtemp` 的 0700 ACL 无法写入
+  而失败，必须走 `tmp/run_tests_sandbox.py`。
+- 待实机：烧录后读 `imu_calibration`——预期 `calibrated==1`、`spread_dps` 约 1.5–2.5、
+  `window_ms` 约 1000（明显偏大说明主循环比数据就绪慢、样本被丢）。若仍失败且
+  `spread_dps` 达几十 dps，则不是噪声问题，要查线束拉扯、云台缓慢漂移或单帧 SPI 位错。
+
+## 2026-11-16（续）：峰峰值判据换成半窗均值差
+
+- 实测：4 dps 版本编译烧录后仍是 `calibrated=0`、`failed=1`、`collected=1000/1000`，
+  而 `spread_dps = 4.4556641`。也就是说云台静止不动，一窗的峰峰值就有 4.46 dps
+  （≈73 个 LSB，1 LSB = 0.061 dps），是白噪声期望 2.0 dps 的两倍多：峰峰值被单个最坏
+  样本支配，尾部比按 σ 推的宽。
+- 判断：继续抬峰峰值阈值只能猜数字——4.46 之上该写 5 还是 6 没有物理依据，换块板噪声
+  不同又会失败，而且这个判据对匀速转动本来就无感。
+- 改动：动作判据换成**半窗均值差**，峰峰值降级为数据损坏保险。
+  - `modules/imu/bmi088.h`：新增 `BMI088_CALIBRATION_MAX_DRIFT_DPS 1.0f`；
+    `BMI088_CALIBRATION_MAX_SPREAD_DPS` 4.0→20.0（约静止实测值的 4.5 倍、噪声期望的
+    10 倍，只有总线/位错风暴才会顶穿）；`BMI088_GyroCalibration` 新增 `drift_dps`。
+  - `modules/imu/bmi088.c`：累积到 `target/2` 时快照 `calibration_half_sum`；
+    `finish_calibration` 里 `drift = 三轴最大 |后半均值 − 前半均值|`，与 spread 一起进
+    拒绝条件。
+- 数值依据：静止时半窗均值差约 0.02 dps（σ/√500×√2），单个坏样本只贡献 G/500
+  （8 dps 尖峰 → 0.016 dps），而匀速 r dps 会贡献 r。1 dps 的阈值对应最坏 0.017 rad/s
+  的零偏误差，相对 0.3 rad/s 的 yaw 环可以接受；实测这一窗的 4.46 dps 峰峰值在
+  drift 上是 0.0x 量级，会直接通过。
+- 测试：`tests/test_bmi088.c` 新增两个用例——孤立 18 dps 尖峰必须通过（drift 远小于 1），
+  0→4.95 dps 的缓慢爬升必须被拒（spread 仅 4.95 低于 20，但 drift 2.5 超限）。
+  `python tmp/run_tests_sandbox.py --imu`、`--attitude` 通过。
+- 待实机：烧录后同时读 `drift_dps` 与 `spread_dps`。若 `drift_dps` 也超过 1 dps，说明窗口
+  内真有持续转动/蠕动，那要查机械（线束张力、yaw 轴粘滑）而不是改代码。
