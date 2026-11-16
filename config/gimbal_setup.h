@@ -52,7 +52,9 @@
  * gimbal centered), then set the value and GIMBAL_YAW_ZERO_CONFIRMED to 1.
  * Until confirmed the status frame reports calibrated=false and the chassis
  * refuses separate/follow, because a wrong zero skews translation and follow. */
-#define GIMBAL_YAW_ZERO 0.873759449f
+/* Follow settled 90 degrees CCW from chassis forward at the former zero
+ * (0.873759449 rad). Shift the reference clockwise by pi/2. */
+#define GIMBAL_YAW_ZERO (-0.697036878f)
 #define GIMBAL_YAW_ZERO_CONFIRMED 1
 
 /* User reported that the 2 N m commissioning cap still cannot raise the
