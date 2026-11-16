@@ -57,7 +57,7 @@
 #define BMI088_GYRO_BANDWIDTH_1000HZ_230HZ 0x01U
 #define BMI088_GYRO_NORMAL_MODE 0x00U
 #define BMI088_GYRO_DRDY_ON 0x80U
-#define BMI088_GYRO_INT3_PUSH_PULL_ACTIVE_HIGH 0x00U
+#define BMI088_GYRO_INT3_PUSH_PULL_ACTIVE_HIGH 0x01U
 #define BMI088_GYRO_DRDY_TO_INT3 0x01U
 
 #define BMI088_FLAG_ACCEL_READY 0x01U
@@ -243,10 +243,10 @@ HAL_StatusTypeDef BMI088_Init(SPI_HandleTypeDef *hspi)
     HAL_GPIO_WritePin(IMU_ACCEL_CS_GPIO_Port, IMU_ACCEL_CS_Pin, GPIO_PIN_SET);
     HAL_GPIO_WritePin(IMU_GYRO_CS_GPIO_Port, IMU_GYRO_CS_Pin, GPIO_PIN_SET);
 
-    /* The accelerometer comes up in I2C mode; one read with the chip selected
-     * switches it to SPI and the value itself is discarded. */
-    uint8_t discarded[1];
-    if (read_regs(&accel_target, 0x7FU, discarded, 1U) != HAL_OK) {
+    /* The first transaction selects SPI on the rising edge of CS. */
+    HAL_Delay(1U);
+    uint8_t chip_id = 0U;
+    if (read_regs(&accel_target, BMI088_ACC_CHIP_ID_REG, &chip_id, 1U) != HAL_OK) {
         return HAL_ERROR;
     }
     if (write_reg(&accel_target, BMI088_ACC_SOFTRESET_REG, BMI088_SOFTRESET_CMD) != HAL_OK) {
@@ -254,7 +254,10 @@ HAL_StatusTypeDef BMI088_Init(SPI_HandleTypeDef *hspi)
     }
     HAL_Delay(BMI088_ACCEL_RESET_DELAY_MS);
 
-    uint8_t chip_id = 0U;
+    /* Soft reset selects I2C again. The first read only restores SPI. */
+    if (read_regs(&accel_target, BMI088_ACC_CHIP_ID_REG, &chip_id, 1U) != HAL_OK) {
+        return HAL_ERROR;
+    }
     if (read_regs(&accel_target, BMI088_ACC_CHIP_ID_REG, &chip_id, 1U) != HAL_OK ||
         chip_id != BMI088_ACCEL_CHIP_ID) {
         return HAL_ERROR;
@@ -276,6 +279,8 @@ HAL_StatusTypeDef BMI088_Init(SPI_HandleTypeDef *hspi)
         if (write_reg(&accel_target, accel_config[i].reg, accel_config[i].value) != HAL_OK) {
             return HAL_ERROR;
         }
+        /* Covers SPI write settling in suspend and the wake-up delay. */
+        HAL_Delay(1U);
     }
 
     if (write_reg(&gyro_target, BMI088_GYRO_SOFTRESET_REG, BMI088_SOFTRESET_CMD) != HAL_OK) {
@@ -295,14 +300,15 @@ HAL_StatusTypeDef BMI088_Init(SPI_HandleTypeDef *hspi)
         {BMI088_GYRO_RANGE_REG, BMI088_GYRO_RANGE_2000_CODE},
         {BMI088_GYRO_BANDWIDTH_REG, BMI088_GYRO_BANDWIDTH_1000HZ_230HZ},
         {BMI088_GYRO_LPM1_REG, BMI088_GYRO_NORMAL_MODE},
-        {BMI088_GYRO_INT_CTRL_REG, BMI088_GYRO_DRDY_ON},
         {BMI088_GYRO_INT3_INT4_IO_CONF_REG, BMI088_GYRO_INT3_PUSH_PULL_ACTIVE_HIGH},
         {BMI088_GYRO_INT3_INT4_IO_MAP_REG, BMI088_GYRO_DRDY_TO_INT3},
+        {BMI088_GYRO_INT_CTRL_REG, BMI088_GYRO_DRDY_ON},
     };
     for (unsigned i = 0; i < sizeof gyro_config / sizeof gyro_config[0]; ++i) {
         if (write_reg(&gyro_target, gyro_config[i].reg, gyro_config[i].value) != HAL_OK) {
             return HAL_ERROR;
         }
+        HAL_Delay(1U);
     }
 
     imu_ready = true;

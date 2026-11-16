@@ -20,6 +20,7 @@
 static uint8_t accel_regs[0x80];
 static uint8_t gyro_regs[0x80];
 static bool accel_selected, gyro_selected;
+static bool accel_spi_mode, accel_reset_pending;
 static HAL_StatusTypeDef spi_result = HAL_OK;
 static uint32_t tick = 1000U;
 
@@ -29,6 +30,10 @@ void HAL_Delay(uint32_t delay) { (void)delay; }
 void HAL_GPIO_WritePin(GPIO_TypeDef *port, uint16_t pin, GPIO_PinState state)
 {
     if (port == IMU_ACCEL_CS_GPIO_Port && pin == IMU_ACCEL_CS_Pin) {
+        if (accel_selected && state == GPIO_PIN_SET) {
+            accel_spi_mode = !accel_reset_pending;
+            accel_reset_pending = false;
+        }
         accel_selected = state == GPIO_PIN_RESET;
     } else if (port == IMU_GYRO_CS_GPIO_Port && pin == IMU_GYRO_CS_Pin) {
         gyro_selected = state == GPIO_PIN_RESET;
@@ -46,6 +51,11 @@ HAL_StatusTypeDef HAL_SPI_TransmitReceive(SPI_HandleTypeDef *hspi, const uint8_t
     if (accel_selected == gyro_selected || size < 2U) {
         return HAL_ERROR; /* Exactly one die must be selected. */
     }
+    if (accel_selected && !accel_spi_mode) {
+        /* Data is invalid until CS rises and switches the die to SPI. */
+        for (uint16_t i = 0; i < size; ++i) rx[i] = 0xFFU;
+        return HAL_OK;
+    }
     uint8_t *regs = accel_selected ? accel_regs : gyro_regs;
     const unsigned skip = accel_selected ? 2U : 1U; /* Address byte (+ accel dummy). */
 
@@ -56,6 +66,9 @@ HAL_StatusTypeDef HAL_SPI_TransmitReceive(SPI_HandleTypeDef *hspi, const uint8_t
         }
     } else {
         regs[tx[0] & 0x7FU] = tx[1];
+        if (accel_selected && tx[0] == 0x7EU && tx[1] == 0xB6U) {
+            accel_reset_pending = true;
+        }
         for (uint16_t i = 0; i < size; ++i) {
             rx[i] = 0U;
         }
@@ -129,7 +142,7 @@ int main(void)
     CHECK(gyro_regs[0x10U] == 0x01U);
     CHECK(gyro_regs[0x11U] == 0x00U);
     CHECK(gyro_regs[0x15U] == 0x80U);
-    CHECK(gyro_regs[0x16U] == 0x00U);
+    CHECK(gyro_regs[0x16U] == 0x01U);
     CHECK(gyro_regs[0x18U] == 0x01U);
 
     /* Accelerometer conversion: 16384 LSB is half of the 6 g range. */
