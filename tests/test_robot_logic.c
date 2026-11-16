@@ -157,6 +157,19 @@ int main(void)
     CHECK(Gimbal_Step(&gimbal, &cmd, &fb, true, 0.01f, &go) && go.torque[1] == 0);
     fb.joint[1] = 0.51f;
     CHECK(!Gimbal_Step(&gimbal, &cmd, &fb, true, 0.01f, &go) && go.torque[0] == 0);
+    /* Stalled Yaw must never reverse due to a wrapped accumulated target. */
+    fb.joint[1] = 0;
+    fb.joint_rate[1] = 0;
+    cmd.pitch = 0;
+    for (unsigned i = 0; i < 600; ++i) {
+        CHECK(Gimbal_Step(&gimbal, &cmd, &fb, true, 0.02f, &go));
+        CHECK(go.rate[0] > 0);
+    }
+    cmd.yaw = -1;
+    CHECK(Gimbal_Step(&gimbal, &cmd, &fb, true, 0.02f, &go) && go.rate[0] < 0);
+    cmd.yaw = 0;
+    CHECK(Gimbal_Step(&gimbal, &cmd, &fb, true, 0.02f, &go) && fabsf(go.rate[0]) < 1e-5f);
+    cmd.yaw = cmd.pitch = 1;
     gc.space[1] = GIMBAL_WORLD;
     CHECK(Gimbal_Init(&gimbal, &gc));
     fb = (GimbalFeedback){.joint = {0,0.49f}, .world = {0,0.2f}, .joint_fresh = true, .world_fresh = true};

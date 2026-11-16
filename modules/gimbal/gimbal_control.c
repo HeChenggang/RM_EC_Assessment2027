@@ -7,6 +7,7 @@ void Gimbal_Reset(GimbalControl *s)
 {
     if (s == NULL) return;
     s->tracking = false;
+    s->yaw_input_direction = 0;
     s->target[0] = s->target[1] = 0;
     PID_Reset(&s->rate[0]); PID_Reset(&s->rate[1]);
 }
@@ -52,7 +53,23 @@ bool Gimbal_Step(GimbalControl *s, const RobotCommand *cmd,
         s->target[0] = Motion_Wrap(measured[0]); s->target[1] = measured[1];
         s->tracking = true;
     }
-    s->target[0] = Motion_Wrap(s->target[0] + cmd->yaw * c->yaw_command_rate * dt);
+    const int yaw_direction = (cmd->yaw > 0.0f) - (cmd->yaw < 0.0f);
+    const float yaw_angle = Motion_Wrap(measured[0]);
+    if (yaw_direction != s->yaw_input_direction) {
+        /* Drop the old target on release or reversal and start from feedback. */
+        s->target[0] = yaw_angle;
+        PID_Reset(&s->rate[0]);
+        s->yaw_input_direction = yaw_direction;
+    }
+    if (yaw_direction != 0) {
+        /* Once the outer loop reaches its rate cap, more angle error adds
+         * no authority. Bound it before wrapping to avoid a sign flip at pi. */
+        const float max_error = fminf(c->max_rate[0] / c->angle_kp[0], MOTION_PI / 2.0f);
+        const float step = cmd->yaw * c->yaw_command_rate * dt;
+        if (!isfinite(step)) goto stop;
+        const float error = Motion_Wrap(s->target[0] - yaw_angle);
+        s->target[0] = Motion_Wrap(yaw_angle + Motion_Clamp(error + step, max_error));
+    }
     s->target[1] += cmd->pitch * c->pitch_command_rate * dt;
     /* Local aligned-axis relationship: change in world pitch = change in
      * joint pitch at this instant. Clamp the corresponding joint target. */

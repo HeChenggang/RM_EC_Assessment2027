@@ -19,6 +19,7 @@ typedef struct {
     GimbalConfig config;
     PID_Controller rate[2];
     float target[2];
+    int yaw_input_direction;
     bool configured, tracking;
 } GimbalControl;
 typedef struct { float target[2], rate[2], torque[2]; } GimbalOutput;
