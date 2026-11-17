@@ -353,7 +353,10 @@ int main(void)
         for (unsigned i = 0; i < 4; ++i) {
             const float sign = lateral_sign[i] * side * directions[i];
             CHECK(sign * drive.wheels.motor_rpm[i] > 0);
-            CHECK(sign * drive.current[i] > 0);
+            /* A stationary wheel at this target must be able to exceed the old
+             * floor-test cap, which saturated during loaded strafing. */
+            CHECK(sign * drive.current[i] > 2000);
+            CHECK(sign * drive.current[i] <= CHASSIS_CURRENT_LIMIT_RAW);
         }
 
         /* Switch from a loaded low-speed forward command directly to strafe.
