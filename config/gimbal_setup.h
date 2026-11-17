@@ -84,11 +84,14 @@
  * frozen target; raise angle_kp[1] if that feels loose on the real mechanism. */
 #define GIMBAL_PITCH_MAX_RATE 2.00f
 
-/* Keep the speed gain independent of the torque cap. At full rate reference
- * and zero measured speed, the proportional term commands 2.4 N m. */
+/* Build torque under sustained rate error without raising the proportional
+ * gain. The DM-J4310-2EC peak torque is 7 N m and its rating is 3 N m. */
 #define GIMBAL_YAW_SPEED_KP 1.2f
-#define GIMBAL_YAW_TORQUE_LIMIT 3.00f /* DM-J4310-2EC continuous torque rating */
+#define GIMBAL_YAW_SPEED_KI 3.0f
+#define GIMBAL_YAW_TORQUE_LIMIT 7.00f
 #define GIMBAL_YAW_MAX_RATE 2.00f /* rad/s, full-stick heading rate and outer-loop limit */
+/* Allow full torque at maximum rate reference with zero measured speed. */
+#define GIMBAL_YAW_INTEGRAL_LIMIT (GIMBAL_YAW_TORQUE_LIMIT - GIMBAL_YAW_SPEED_KP * GIMBAL_YAW_MAX_RATE)
 
 /* Conservative initial gains in N m; not final tuned gains. */
 static inline GimbalDriveConfig GimbalSetup_Config(void)
@@ -97,7 +100,9 @@ static inline GimbalDriveConfig GimbalSetup_Config(void)
         .control={.pitch_min=GIMBAL_PITCH_MIN, .pitch_max=GIMBAL_PITCH_MAX,
             .yaw_command_rate=GIMBAL_YAW_MAX_RATE, .pitch_command_rate=GIMBAL_PITCH_MAX_RATE,
             .angle_kp={3,3}, .max_dt=0.02f,
-            .rate_pid={{.kp=GIMBAL_YAW_SPEED_KP,.output_limit=GIMBAL_YAW_TORQUE_LIMIT,.max_dt=0.02f},
+            .rate_pid={{.kp=GIMBAL_YAW_SPEED_KP,.ki=GIMBAL_YAW_SPEED_KI,
+                        .output_limit=GIMBAL_YAW_TORQUE_LIMIT,
+                        .integral_limit=GIMBAL_YAW_INTEGRAL_LIMIT,.max_dt=0.02f},
                        {.kp=GIMBAL_PITCH_SPEED_KP,.ki=GIMBAL_PITCH_SPEED_KI,
                         .output_limit=GIMBAL_PITCH_TORQUE_LIMIT,
                         .integral_limit=GIMBAL_PITCH_INTEGRAL_LIMIT,.max_dt=0.02f}},

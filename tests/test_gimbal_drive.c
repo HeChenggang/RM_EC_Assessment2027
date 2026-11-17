@@ -270,21 +270,23 @@ int main(void)
     CHECK(s.state==GIMBAL_STOPPED && s.fault==GIMBAL_FEEDBACK);
     c.pitch_stall_ms=0;
     CHECK(!GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
-    /* Full stick uses moderate proportional torque at rest. A large opposing
-     * speed saturates in the commanded direction. */
+    /* A persistent full-stick error builds torque up to the Yaw peak.
+     * Reversing or releasing the stick clears the old load compensation. */
     init(); arm();
     for (int direction=1; direction>=-1; direction-=2) {
         cmd.yaw=(float)direction;
-        for (unsigned i=0; i<80; ++i) {
+        feedback(1); step(5,true);
+        CHECK(torque[0]*cmd.yaw>0 && fabsf(torque[0])<0.1f);
+        for (unsigned i=0; i<220; ++i) {
             feedback(1); step(5,true);
             CHECK(s.state==GIMBAL_ACTIVE && fabsf(torque[0])<=GIMBAL_YAW_TORQUE_LIMIT);
         }
-        CHECK(fabsf(torque[0]-cmd.yaw*2.4f)<0.01f);
+        CHECK(fabsf(torque[0]-cmd.yaw*GIMBAL_YAW_TORQUE_LIMIT)<0.01f);
         feedback(1); y.vel=-cmd.yaw*3.0f; step(5,true);
         CHECK(s.state==GIMBAL_ACTIVE && torque[0]==cmd.yaw*GIMBAL_YAW_TORQUE_LIMIT);
     }
     cmd.yaw=0; feedback(1); step(5,true);
-    CHECK(torque[0]==0);
+    CHECK(torque[0]==0 && s.control.rate[0].i==0);
     /* Production config: the removed Pitch torque cap lets the rate loop
      * command well beyond the old 2 N m commissioning limit. A heavy axis is
      * simulated by freezing the joint; sustained command builds integral past
