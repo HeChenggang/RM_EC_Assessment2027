@@ -1,32 +1,18 @@
 # Hello World 电控组 2027 考核项目
 
-机器人底盘、云台及遥控器控制开发项目。
-已建立两板固件、驱动和无硬件控制核心，包括模式、安全状态机、闭环框架、姿态与板间协议。
-离线测试和接入边界见 [无硬件控制软件与验证](docs/offline-control.md)。底盘已启用并烧录四轮低速遥控控制，运动效果尚待实机验证，当前状态见 [调试记录](docs/debug-log.md)。
+英雄机器人麦轮底盘和双轴云台控制。底盘与云台各用一块 RoboMaster C 板，底盘接收 DT7 / DR16 指令，两板通过 CAN1 双向通信。
 
-## 目录
+截至 2026-11-17，三种底盘模式和双轴云台已接入固件。11 组 Cortex-M4 仿真测试和两板 Debug / Release 构建通过。当前工程尚未达到完整考核验收条件，详见[逐项验收清单](docs/acceptance.md)。
 
-| 路径 | 用途 |
+| 文档 | 内容 |
 | --- | --- |
-| `firmware/` | 确认开发板后导入 CubeMX / HAL / RTOS 工程 |
-| `modules/chassis/` | 底盘运动学和分离、跟随、小陀螺模式 |
-| `modules/gimbal/` | yaw / pitch 控制与关节限位 |
-| `modules/motor/` | 电机协议、反馈及控制封装 |
-| `modules/remote/` | DT7 / DR16 数据解析及拨杆映射 |
-| `modules/imu/` | IMU 采集、零漂校准与姿态 |
-| `modules/control/` | PID、坐标变换等通用算法 |
-| `modules/safety/` | 急停、掉线处理和启动保护 |
-| `config/` | 经确认的硬件映射与参数 |
-| `docs/` | 需求、调试记录与验收清单 |
-| `tests/` | 后续主机算法测试 |
-| `tools/` | 后续构建及调试辅助工具 |
+| [验收清单](docs/acceptance.md) | 考核条款、代码证据、缺口与实机验收记录 |
+| [配置说明](config/README.md) | 接线、实车参数、遥控器操作 |
+| [双板固件](firmware/README.md) | 工具链、构建产物和板级入口 |
+| [云台固件](firmware/gimbal/README.md) | 外设、控制流程和故障诊断 |
+| [离线验证](docs/offline-control.md) | 测试命令、覆盖范围和固件接入 |
+| [跟随模式](docs/follow-mode.md) / [小陀螺模式](docs/spin-mode.md) | 模式行为和实机核验 |
+| [调试记录](docs/debug-log.md) | 历史上板、参数调整和当前复核 |
+| [参考资料](docs/references/README.md) | 考核原文和本地设备手册 |
 
-## 开发起点
-
-1. 在 `config/README.md` 确认开发板、底盘类型、电机与通信映射。
-2. 将对应固件工程放入 `firmware/`，记录工具链和构建方式。
-3. 依次完成通信及安全保护、单电机、底盘、云台和模式联调。
-4. 按 `docs/acceptance.md` 记录验证结果。
-
-模块目录为组织约定；导入固件后仍需配置源码路径与头文件路径。
-Git 默认分支为 `main`，提交前检查 `git diff`。
+左拨杆上／中／下分别选择分离、跟随、小陀螺。右拨杆中位待机，下位急停。使能须先在中位让四轴摇杆回中，再拨到上位。

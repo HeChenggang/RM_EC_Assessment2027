@@ -19,8 +19,7 @@
 ## 已有接入
 
 `main.c` 的 USER CODE 区调用 `M3508_CAN_Init(&hcan2)`，并在
-`HAL_CAN_RxFifo1MsgPendingCallback()` 中转发接收事件；主循环每 10 ms
-发送一帧全零电流，便于先核对通信。调试器可观察 `motor_can_tx_status`，
+`HAL_CAN_RxFifo1MsgPendingCallback()` 中转发接收事件；主循环约每 10 ms 按安全门控发送一次电流。运行时使用四轮闭环输出，停机时发零电流。调试器可观察 `motor_can_tx_status`，
 以及模块内部 `feedback` 数组；业务代码请用快照接口读取反馈。
 
 ```c
@@ -56,8 +55,7 @@ CAN1/CAN2 共享过滤器边界固定为 14；后续 CAN1 过滤器用 bank 0..1
 
 现有工程初始化了 IWDG（64/400，按 32 kHz 约 802 ms），遥控器模块已接入
 合法帧喂狗。没有遥控器有效帧时仍会周期性复位；没有以电机反馈或
-主循环无条件喂狗替代遥控器保护。持续控制前仍需完成解锁/急停状态机。
-默认只发送零电流，不会主动驱动轮子；零电流也不代表机械制动。
+主循环无条件喂狗替代遥控器保护。解锁和急停已接入安全门控。上电待机、急停和故障时发零电流，底盘仍可能因惯性滑行。
 
 ## 编译与验证
 
@@ -72,13 +70,12 @@ cmake --build --preset Debug
 中的 Arm GNU 工具链：
 
 ```powershell
-python tests/run_motor_tests.py
+python tests/run_motor_tests.py --all
 ```
 
 测试将真实驱动和 HAL 替身编译为 Cortex-M4 指令并执行，覆盖 ID/帧类型/
 长度检查、负数解析、电流字节序与限幅、邮箱忙、离线超时及计时回绕。
-不代替 CAN 硬件验证。上板先架空底盘，检查四轮反馈及电调 ID，再接入
-遥控器保护和单轮小电流闭环；暂不要直接填满量程电流。
+四轮反馈曾在线，当前基线的实机闭环与停止行为见[验收清单](../../docs/acceptance.md)。
 
 ## 云台 Pitch
 
