@@ -76,6 +76,13 @@
 #define GIMBAL_PITCH_STALL_MS 1000U
 #define GIMBAL_PITCH_STALL_TRAVEL 0.005f
 #define GIMBAL_PITCH_STALL_ERROR 0.05f
+/* Full-stick pitch rate and outer-loop limit, rad/s. Same cap as yaw so both
+ * axes feel alike and stay well below the joint travel budget that the angle
+ * loop can track (angle_kp * travel = 3 * 1.217 rad/s). At 2.00 rad/s the
+ * target leads the measured angle by rate / angle_kp = 0.67 rad while the
+ * stick is held, so a release lets the joint glide about 0.2 rad to the
+ * frozen target; raise angle_kp[1] if that feels loose on the real mechanism. */
+#define GIMBAL_PITCH_MAX_RATE 2.00f
 
 /* Keep the speed gain independent of the torque cap. At full rate reference
  * and zero measured speed, the proportional term commands 2.4 N m. */
@@ -88,13 +95,13 @@ static inline GimbalDriveConfig GimbalSetup_Config(void)
 {
     const GimbalDriveConfig config = {
         .control={.pitch_min=GIMBAL_PITCH_MIN, .pitch_max=GIMBAL_PITCH_MAX,
-            .yaw_command_rate=GIMBAL_YAW_MAX_RATE, .pitch_command_rate=0.25f,
+            .yaw_command_rate=GIMBAL_YAW_MAX_RATE, .pitch_command_rate=GIMBAL_PITCH_MAX_RATE,
             .angle_kp={3,3}, .max_dt=0.02f,
             .rate_pid={{.kp=GIMBAL_YAW_SPEED_KP,.output_limit=GIMBAL_YAW_TORQUE_LIMIT,.max_dt=0.02f},
                        {.kp=GIMBAL_PITCH_SPEED_KP,.ki=GIMBAL_PITCH_SPEED_KI,
                         .output_limit=GIMBAL_PITCH_TORQUE_LIMIT,
                         .integral_limit=GIMBAL_PITCH_INTEGRAL_LIMIT,.max_dt=0.02f}},
-            .max_rate={GIMBAL_YAW_MAX_RATE,0.25f},
+            .max_rate={GIMBAL_YAW_MAX_RATE,GIMBAL_PITCH_MAX_RATE},
             .pitch_hold_kp=GIMBAL_PITCH_HOLD_KP,
             .space={GIMBAL_YAW_WORLD ? GIMBAL_WORLD : GIMBAL_JOINT, GIMBAL_JOINT},
             .spin_max_time=GIMBAL_SPIN_MAX_TIME_S, .spin_max_travel=GIMBAL_SPIN_MAX_TRAVEL_RAD},

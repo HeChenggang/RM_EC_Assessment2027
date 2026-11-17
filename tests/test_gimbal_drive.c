@@ -162,6 +162,10 @@ int main(void)
     c=GimbalSetup_Config();
     CHECK(fabsf(c.control.pitch_min-(-0.258f))<0.00001f);
     CHECK(fabsf(c.control.pitch_max-0.959f)<0.00001f);
+    /* Full-stick pitch speed matches yaw; a regression here reintroduces the
+     * slow 0.25 rad/s slew the user reported. */
+    CHECK(c.control.pitch_command_rate==GIMBAL_PITCH_MAX_RATE &&
+          c.control.max_rate[1]==GIMBAL_PITCH_MAX_RATE);
     GimbalControl calibrated;
     CHECK(Gimbal_Init(&calibrated,&c.control));
     GimbalFeedback f={.joint_fresh=true};
@@ -297,14 +301,19 @@ int main(void)
     step(5,true); CHECK(s.state==GIMBAL_ACTIVE);
     cmd.pitch=1;
     float peak=0;
-    for (unsigned i=0;i<1200;++i) {
+    unsigned steps=0;
+    for (; steps<1200 && s.state==GIMBAL_ACTIVE; ++steps) {
         y.last_rx_ms=now; ++y.rx_count;
         p.last_rx_ms=now; ++p.rx_count;
         step(5,true);
-        CHECK(s.state==GIMBAL_ACTIVE);
-        if (torque[1]<peak) peak=torque[1];
+        if (s.state==GIMBAL_ACTIVE && torque[1]<peak) peak=torque[1];
     }
-    CHECK(peak<-2.0f && peak>=-DM4340_T_MAX);
+    /* At 2.00 rad/s full stick against a frozen joint the rate loop saturates
+     * the MIT torque range within about a second, so the loaded-stall guard
+     * stops the axis instead of leaving it pushing below the threshold. */
+    CHECK(s.state==GIMBAL_STOPPED && s.fault==GIMBAL_STALL);
+    CHECK(steps>=200 && steps<=1200);
+    CHECK(peak<=-0.9f*DM4340_T_MAX && peak>=-DM4340_T_MAX);
     c=GimbalSetup_Config(); c.pitch_stall_travel=NAN;
     CHECK(!GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
     /* Neutral stick preserves the target under either external displacement.
