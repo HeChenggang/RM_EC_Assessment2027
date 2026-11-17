@@ -10,7 +10,7 @@
  * must match dm4340_drv.h.
  * Configure each motor's own command-loss timeout before hardware operation. */
 #define GIMBAL_HARDWARE_CONFIRMED 1
-/* User-authorized low-torque dual-axis test; Yaw CCW direction verified. */
+/* Dual-axis control; Yaw CCW direction verified. */
 #define GIMBAL_PITCH_ONLY_TEST 0
 /* Read from the actual Yaw motor: MIT=1, valid_mask=15 (2026-11-16). */
 #define GIMBAL_YAW_PROTOCOL_CONFIRMED 1
@@ -21,8 +21,8 @@
  * Raising the barrel decreases raw angle; calibrated joint pitch is up-positive. */
 #define GIMBAL_PITCH_ZERO (-0.184f)
 #define GIMBAL_PITCH_UPPER_RAW (-1.143f)
-/* Lower endpoint adjusted around the observed raw position of 0.059107 rad. */
-#define GIMBAL_PITCH_LOWER_RAW 0.060f
+/* Mechanical lower stop measured at 0.074255 rad (2026-11-17). */
+#define GIMBAL_PITCH_LOWER_RAW 0.074f
 #define GIMBAL_PITCH_MIN (GIMBAL_PITCH_ZERO - GIMBAL_PITCH_LOWER_RAW)
 #define GIMBAL_PITCH_MAX (GIMBAL_PITCH_ZERO - GIMBAL_PITCH_UPPER_RAW)
 #define GIMBAL_YAW_DIRECTION 1
@@ -77,9 +77,10 @@
 #define GIMBAL_PITCH_STALL_TRAVEL 0.005f
 #define GIMBAL_PITCH_STALL_ERROR 0.05f
 
-/* Yaw speed-loop tuning. The working torque cap is in N m. */
+/* Keep the speed gain independent of the torque cap. At full rate reference
+ * and zero measured speed, the proportional term commands 2.4 N m. */
 #define GIMBAL_YAW_SPEED_KP 1.2f
-#define GIMBAL_YAW_TORQUE_LIMIT 0.50f
+#define GIMBAL_YAW_TORQUE_LIMIT 3.00f /* DM-J4310-2EC continuous torque rating */
 #define GIMBAL_YAW_MAX_RATE 2.00f /* rad/s, full-stick heading rate and outer-loop limit */
 
 /* Conservative initial gains in N m; not final tuned gains. */

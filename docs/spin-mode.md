@@ -21,7 +21,7 @@
 2. 云台朝底盘正前方，测量 yaw_feedback.pos * GIMBAL_YAW_DIRECTION，填入
    GIMBAL_YAW_ZERO，并设置 GIMBAL_YAW_ZERO_CONFIRMED=1。
 3. 保持待机，等 `attitude_ready=1`。先验证云台抗扰方向及
-   现有 0.50 N·m Yaw 力矩上限下的跟踪能力，再进行低速底盘联调。
+   当前 `GIMBAL_YAW_TORQUE_LIMIT` 下的跟踪能力，再进行低速底盘联调。
 
 当前确认位允许小陀螺使用世界航向。联调使用固定零偏 0 °/s，需记录连续旋转时的航向漂移。下板所有模式都要求有效的相对 yaw。见 [跟随模式](follow-mode.md)。
 

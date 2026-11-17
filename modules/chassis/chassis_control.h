@@ -15,6 +15,7 @@ typedef struct {
     ChassisConfig config;
     PID_Controller wheel[4];
     Mecanum_Velocity previous;
+    float previous_target_rpm[4];
     bool configured;
 } ChassisControl;
 typedef struct {

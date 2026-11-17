@@ -8,7 +8,10 @@ void Chassis_Reset(ChassisControl *s)
 {
     if (s == NULL) return;
     s->previous = (Mecanum_Velocity){0};
-    for (unsigned i = 0; i < 4; ++i) PID_Reset(&s->wheel[i]);
+    for (unsigned i = 0; i < 4; ++i) {
+        PID_Reset(&s->wheel[i]);
+        s->previous_target_rpm[i] = 0.0f;
+    }
 }
 bool Chassis_Init(ChassisControl *s, const ChassisConfig *c)
 {
@@ -65,14 +68,22 @@ bool Chassis_Step(ChassisControl *s, const RobotCommand *cmd, float yaw,
     ChassisOutput result = {.velocity = v};
     if (!Mecanum_Inverse(&c->geometry, &v, &result.wheels)) goto stop;
     for (unsigned i = 0; i < 4; ++i) {
+        const float target = result.wheels.motor_rpm[i];
+        const float previous_target = s->previous_target_rpm[i];
+        if ((target < 0.0f && previous_target > 0.0f) ||
+            (target > 0.0f && previous_target < 0.0f)) {
+            /* A reference can cross zero between ticks. Drop the old drive bias. */
+            s->wheel[i].i = 0.0f;
+        }
         float current;
-        if (!PID_Update(&s->wheel[i], result.wheels.motor_rpm[i], rpm[i], dt, &current)) goto stop;
-        if (result.wheels.motor_rpm[i] == 0.0f) {
+        if (!PID_Update(&s->wheel[i], target, rpm[i], dt, &current)) goto stop;
+        if (target == 0.0f) {
             /* Brake proportionally at zero target without accumulating bias. */
             current = Motion_Clamp(s->wheel[i].p, c->wheel_pid[i].output_limit);
             PID_Reset(&s->wheel[i]);
         }
         result.current[i] = (int16_t)current;
+        s->previous_target_rpm[i] = target;
     }
     s->previous = v;
     *out = result;

@@ -29,6 +29,6 @@
 /* No physical yaw move can exceed this between two 20 ms status frames. */
 #define CHASSIS_YAW_JUMP_RAD 0.3f
 /* Upper-board status gates follow on calibrated, fresh world yaw. */
-#define CHASSIS_FOLLOW_KP 1.0f
+#define CHASSIS_FOLLOW_KP 2.0f
 
 #endif

@@ -349,6 +349,38 @@ int main(void)
             CHECK(Chassis_Step(&robot.chassis, &cmd, 0, stopped_rpm, fresh, true, 0.01f, &drive));
         CHECK(NEAR(drive.velocity.vy, side * 0.60f, 0.001f));
         CHECK(NEAR(drive.wheels.scale, 1.0f, 0.001f));
+        const float lateral_sign[4] = {-1, 1, -1, 1};
+        for (unsigned i = 0; i < 4; ++i) {
+            const float sign = lateral_sign[i] * side * directions[i];
+            CHECK(sign * drive.wheels.motor_rpm[i] > 0);
+            CHECK(sign * drive.current[i] > 0);
+        }
+
+        /* Switch from a loaded low-speed forward command directly to strafe.
+         * The ramp can cross zero between samples on two wheels. */
+        Chassis_Reset(&robot.chassis);
+        cmd.forward = 0.08f;
+        cmd.left = 0;
+        for (unsigned step = 0; step < 120; ++step)
+            CHECK(Chassis_Step(&robot.chassis, &cmd, 0, stopped_rpm, fresh, true, 0.01f, &drive));
+        for (unsigned i = 0; i < 4; ++i)
+            CHECK(directions[i] * robot.chassis.wheel[i].i > 0);
+
+        cmd.forward = 0;
+        cmd.left = side * 0.08f;
+        unsigned reversed = 0;
+        for (unsigned step = 0; step < 25; ++step) {
+            const Mecanum_Wheels previous = drive.wheels;
+            CHECK(Chassis_Step(&robot.chassis, &cmd, 0, stopped_rpm, fresh, true, 0.01f, &drive));
+            for (unsigned i = 0; i < 4; ++i) {
+                if (directions[i] * previous.motor_rpm[i] > 0 &&
+                    directions[i] * drive.wheels.motor_rpm[i] < 0) {
+                    CHECK(directions[i] * drive.current[i] < 0);
+                    ++reversed;
+                }
+            }
+        }
+        CHECK(reversed == 2);
     }
     Chassis_Reset(&robot.chassis);
     cmd.forward = 1;

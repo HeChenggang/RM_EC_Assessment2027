@@ -160,7 +160,7 @@ int main(void)
     arm(); cmd.pitch=1; feedback(1); step(5,true); CHECK(torque[1]<0);
     /* Actual measured pitch calibration: zero and both endpoint directions. */
     c=GimbalSetup_Config();
-    CHECK(fabsf(c.control.pitch_min-(-0.244f))<0.00001f);
+    CHECK(fabsf(c.control.pitch_min-(-0.258f))<0.00001f);
     CHECK(fabsf(c.control.pitch_max-0.959f)<0.00001f);
     GimbalControl calibrated;
     CHECK(Gimbal_Init(&calibrated,&c.control));
@@ -232,10 +232,7 @@ int main(void)
         p.last_rx_ms=now; ++p.rx_count; step(5,true);
     }
     CHECK(s.state==GIMBAL_ACTIVE && !s.pitch_stall_tracking);
-    p.motor.pos=0.059107065f;
-    p.last_rx_ms=now; ++p.rx_count; step(5,true);
-    CHECK(s.state==GIMBAL_ACTIVE && s.fault==GIMBAL_OK);
-    p.motor.pos=GIMBAL_PITCH_LOWER_RAW+0.00001f;
+    p.motor.pos=0.074255466f;
     p.last_rx_ms=now; ++p.rx_count; cmd.pitch=-1; step(5,true);
     CHECK(s.state==GIMBAL_ACTIVE && torque[1]<=0); /* no outward/down torque */
     p.motor.pos=GIMBAL_PITCH_LOWER_RAW+0.002f;
@@ -243,8 +240,8 @@ int main(void)
     CHECK(s.state==GIMBAL_STOPPED && s.fault==GIMBAL_LIMIT);
     cmd.pitch=0; cmd.yaw=0; cmd.arm=false; step(20,true);
     cmd.arm=true; step(5,true); step(5,true);
-    p.motor.pos=GIMBAL_PITCH_ZERO; p.last_rx_ms=now; ++p.rx_count; step(5,true);
-    CHECK(s.state==GIMBAL_ACTIVE);
+    p.motor.pos=0.074255466f; p.last_rx_ms=now; ++p.rx_count; step(5,true);
+    CHECK(s.state==GIMBAL_ACTIVE && s.last_fault==GIMBAL_OK);
     p.last_rx_ms=now-100; step(5,true);
     CHECK(s.state==GIMBAL_STOPPED && s.fault==GIMBAL_FEEDBACK);
     /* P0-2 skeleton: a WORLD yaw axis tracks the attitude sample, not the joint
@@ -269,6 +266,21 @@ int main(void)
     CHECK(s.state==GIMBAL_STOPPED && s.fault==GIMBAL_FEEDBACK);
     c.pitch_stall_ms=0;
     CHECK(!GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
+    /* Full stick uses moderate proportional torque at rest. A large opposing
+     * speed saturates in the commanded direction. */
+    init(); arm();
+    for (int direction=1; direction>=-1; direction-=2) {
+        cmd.yaw=(float)direction;
+        for (unsigned i=0; i<80; ++i) {
+            feedback(1); step(5,true);
+            CHECK(s.state==GIMBAL_ACTIVE && fabsf(torque[0])<=GIMBAL_YAW_TORQUE_LIMIT);
+        }
+        CHECK(fabsf(torque[0]-cmd.yaw*2.4f)<0.01f);
+        feedback(1); y.vel=-cmd.yaw*3.0f; step(5,true);
+        CHECK(s.state==GIMBAL_ACTIVE && torque[0]==cmd.yaw*GIMBAL_YAW_TORQUE_LIMIT);
+    }
+    cmd.yaw=0; feedback(1); step(5,true);
+    CHECK(torque[0]==0);
     /* Production config: the removed Pitch torque cap lets the rate loop
      * command well beyond the old 2 N m commissioning limit. A heavy axis is
      * simulated by freezing the joint; sustained command builds integral past
