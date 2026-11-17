@@ -25,7 +25,7 @@
 - 单位 rad、rad/s、m/s；BMI088 的 gyro_dps 必须乘 π/180。
 - 底盘 x 前、y 左、z 上，正 yaw 为绕 +z 逆时针；相对 yaw 为云台相对底盘。
   `vx_c=cos(yaw)*vx_g-sin(yaw)*vy_g`，`vy_c=sin(yaw)*vx_g+cos(yaw)*vy_g`。
-- 分离模式旋转目标为 0；跟随为限幅后的 `follow_kp*wrap(relative_yaw)`；小陀螺为非零
+- 分离模式旋转目标为 0；跟随由 `follow_kp*wrap(relative_yaw)` 求转速，并按剩余偏角限制制动距离；小陀螺为非零
   `spin_rate`。摇杆 yaw 控制云台。模式切换受斜坡限制，反转时旋转速度可短暂经过 0。
 - 平移按向量长度限幅，四轮超速按麦轮模块等比例缩放。`ChassisOutput.velocity` 是缩放前
   请求，`wheels` 是实际给速度环的目标。PID 输出是 C620 原始电流单位。

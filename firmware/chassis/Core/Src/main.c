@@ -204,7 +204,9 @@ static bool InitChassisControl(void)
     .max_rotation = CHASSIS_MAX_ROTATION_RAD_S,
     .spin_rate = CHASSIS_SPIN_RATE_RAD_S, .follow_kp = CHASSIS_FOLLOW_KP,
     .translation_accel = CHASSIS_TRANSLATION_ACCEL_MPS2,
-    .rotation_accel = 1.0f, .max_dt = 0.025f
+    .rotation_accel = 1.0f,
+    .follow_rotation_accel = CHASSIS_FOLLOW_ROTATION_ACCEL_RAD_S2,
+    .max_dt = 0.025f
   };
   const int8_t direction[M3508_COUNT] = CHASSIS_WHEEL_DIRECTIONS;
   config.geometry.max_motor_rpm = CHASSIS_MAX_ROTOR_RPM;

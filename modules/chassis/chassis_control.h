@@ -9,7 +9,7 @@ typedef struct {
     Mecanum_Config geometry;
     PID_Config wheel_pid[4];
     float max_translation, max_rotation, spin_rate, follow_kp;
-    float translation_accel, rotation_accel, max_dt;
+    float translation_accel, rotation_accel, follow_rotation_accel, max_dt;
 } ChassisConfig;
 typedef struct {
     ChassisConfig config;

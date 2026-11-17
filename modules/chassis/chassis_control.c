@@ -24,7 +24,7 @@ bool Chassis_Init(ChassisControl *s, const ChassisConfig *c)
     if (!positive(c->max_translation) || !positive(c->max_rotation) ||
         !isfinite(c->spin_rate) || c->spin_rate == 0 || fabsf(c->spin_rate) > c->max_rotation ||
         !positive(c->follow_kp) || !positive(c->translation_accel) ||
-        !positive(c->rotation_accel) || !positive(c->max_dt) ||
+        !positive(c->rotation_accel) || !positive(c->follow_rotation_accel) || !positive(c->max_dt) ||
         !positive(c->geometry.max_motor_rpm) || !Mecanum_Inverse(&c->geometry, &zero, &ignored)) return false;
     for (unsigned i = 0; i < 4; ++i) {
         if (!PID_Init(&s->wheel[i], &c->wheel_pid[i]) || c->wheel_pid[i].output_limit > 16384 ||
@@ -51,20 +51,30 @@ bool Chassis_Step(ChassisControl *s, const RobotCommand *cmd, float yaw,
     if (norm > 1) { x /= norm; y /= norm; }
     Mecanum_Velocity v = {0};
     if (!Motion_Rotate(x * c->max_translation, y * c->max_translation, yaw, &v.vx, &v.vy)) goto stop;
-    /* Positive yaw means chassis must rotate CCW to follow the gimbal.
-     * A wrapped proportional loop avoids derivative kick at +/-pi. */
-    const float follow = c->follow_kp * Motion_Wrap(yaw);
-    if (!isfinite(follow)) goto stop;
-    v.wz = cmd->mode == MODE_FOLLOW ? Motion_Clamp(follow, c->max_rotation) :
-        (cmd->mode == MODE_SPIN ? c->spin_rate : 0);
+    float rotation_accel = c->rotation_accel;
+    if (cmd->mode == MODE_FOLLOW) {
+        const float error = Motion_Wrap(yaw);
+        const float follow = c->follow_kp * error;
+        if (!isfinite(follow)) goto stop;
+        rotation_accel = c->follow_rotation_accel;
+        /* Leave ramp headroom for braking and reserve 200 ms for feedback
+         * and wheel response. Solve distance = speed * delay + speed^2 / (2 * decel). */
+        const float decel = 0.75f * rotation_accel;
+        const float lead = 0.20f * decel;
+        const float brake_limit = sqrtf(lead * lead + 2.0f * decel * fabsf(error)) - lead;
+        v.wz = Motion_Clamp(follow, fminf(c->max_rotation, fmaxf(0.0f, brake_limit)));
+    } else if (cmd->mode == MODE_SPIN) {
+        v.wz = c->spin_rate;
+    }
     const float dx = v.vx - s->previous.vx, dy = v.vy - s->previous.vy;
     const float distance = hypotf(dx, dy), step = c->translation_accel * dt;
-    if (!isfinite(distance) || !isfinite(step) || !isfinite(c->rotation_accel * dt)) goto stop;
+    const float rotation_step = rotation_accel * dt;
+    if (!isfinite(distance) || !isfinite(step) || !isfinite(rotation_step)) goto stop;
     if (distance > step) {
         v.vx = s->previous.vx + dx / distance * step;
         v.vy = s->previous.vy + dy / distance * step;
     }
-    v.wz = s->previous.wz + Motion_Clamp(v.wz - s->previous.wz, c->rotation_accel * dt);
+    v.wz = s->previous.wz + Motion_Clamp(v.wz - s->previous.wz, rotation_step);
     ChassisOutput result = {.velocity = v};
     if (!Mecanum_Inverse(&c->geometry, &v, &result.wheels)) goto stop;
     for (unsigned i = 0; i < 4; ++i) {

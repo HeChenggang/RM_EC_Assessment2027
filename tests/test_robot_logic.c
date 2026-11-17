@@ -13,7 +13,8 @@ static ChassisConfig chassis_config(void)
 {
     ChassisConfig c = {.geometry = MECANUM_DEFAULT_CONFIG, .max_translation = 2,
         .max_rotation = 3, .spin_rate = 1, .follow_kp = 2,
-        .translation_accel = 10, .rotation_accel = 10, .max_dt = 0.02f};
+        .translation_accel = 10, .rotation_accel = 10, .follow_rotation_accel = 10,
+        .max_dt = 0.02f};
     c.geometry.max_motor_rpm = 5000;
     for (unsigned i = 0; i < 4; ++i) c.wheel_pid[i] = (PID_Config){
         .kp = 1, .ki = 0.5f, .output_limit = 1000, .integral_limit = 200, .max_dt = 0.02f};
@@ -315,6 +316,10 @@ int main(void)
     cc = chassis_config();
     cc.max_translation = CHASSIS_TRANSLATION_LIMIT_MPS;
     cc.translation_accel = CHASSIS_TRANSLATION_ACCEL_MPS2;
+    cc.max_rotation = CHASSIS_MAX_ROTATION_RAD_S;
+    cc.spin_rate = CHASSIS_SPIN_RATE_RAD_S;
+    cc.follow_kp = CHASSIS_FOLLOW_KP;
+    cc.follow_rotation_accel = CHASSIS_FOLLOW_ROTATION_ACCEL_RAD_S2;
     cc.geometry.max_motor_rpm = CHASSIS_MAX_ROTOR_RPM;
     const int8_t directions[4] = CHASSIS_WHEEL_DIRECTIONS;
     for (unsigned i = 0; i < 4; ++i) {
@@ -392,5 +397,41 @@ int main(void)
         CHECK(Chassis_Step(&robot.chassis, &cmd, 0, stopped_rpm, fresh, true, 0.01f, &drive));
     CHECK(NEAR(hypotf(drive.velocity.vx, drive.velocity.vy), 0.60f, 0.001f));
     CHECK(NEAR(drive.wheels.scale, 1.0f, 0.001f));
+
+    Chassis_Reset(&robot.chassis);
+    cmd = (RobotCommand){.remote_valid = true, .arm = true, .mode = MODE_FOLLOW};
+    for (unsigned step = 0; step < 50; ++step)
+        CHECK(Chassis_Step(&robot.chassis, &cmd, MOTION_PI / 6, stopped_rpm, fresh, true, 0.01f, &drive));
+    CHECK(NEAR(drive.velocity.wz, 1.27f, 0.01f));
+    CHECK(NEAR(drive.wheels.scale, 1.0f, 0.001f));
+
+    for (unsigned step = 0; step < 120; ++step)
+        CHECK(Chassis_Step(&robot.chassis, &cmd, -3 * MOTION_PI / 4, stopped_rpm, fresh, true, 0.01f, &drive));
+    CHECK(NEAR(drive.velocity.wz, -CHASSIS_MAX_ROTATION_RAD_S, 0.001f));
+    CHECK(NEAR(drive.wheels.scale, 1.0f, 0.001f));
+
+    /* Step toward a fixed world heading with 20 ms board status updates and
+     * a simulated 120 ms wheel response. Check both turning directions. */
+    const float offsets_deg[] = {30, 90, -170};
+    const float one_degree = MOTION_PI / 180.0f;
+    for (unsigned i = 0; i < sizeof offsets_deg / sizeof offsets_deg[0]; ++i) {
+        Chassis_Reset(&robot.chassis);
+        const float initial_error = offsets_deg[i] * one_degree;
+        const float direction = copysignf(1.0f, initial_error);
+        float yaw_error = initial_error, reported_error = initial_error;
+        float measured_rpm[4] = {0};
+        for (unsigned step = 0; step < 300; ++step) {
+            if (step % 2 == 0) reported_error = yaw_error;
+            CHECK(Chassis_Step(&robot.chassis, &cmd, reported_error,
+                               measured_rpm, fresh, true, 0.01f, &drive));
+            for (unsigned wheel = 0; wheel < 4; ++wheel)
+                measured_rpm[wheel] += (drive.wheels.motor_rpm[wheel] - measured_rpm[wheel]) / 12.0f;
+            Mecanum_Velocity measured;
+            CHECK(Mecanum_Forward(&cc.geometry, measured_rpm, &measured));
+            yaw_error -= measured.wz * 0.01f;
+            CHECK(direction * yaw_error >= -one_degree);
+        }
+        CHECK(fabsf(yaw_error) < 0.1f * one_degree);
+    }
     return 0;
 }
