@@ -86,7 +86,7 @@ int main(void)
     arm(); CHECK(s.state==GIMBAL_ACTIVE && s.fault==GIMBAL_OK);
     CHECK(fabsf(s.output.target[1])<0.0001f); /* calibrated offset */
     cmd.yaw=1; cmd.pitch=1; feedback(1); step(5,true);
-    CHECK(torque[0]>0 && torque[1]>0 && torque[0]<=GIMBAL_YAW_TORQUE_LIMIT && torque[1]<=1);
+    CHECK(torque[0]>0 && torque[1]>0 && torque[0]<=GIMBAL_YAW_TORQUE_LIMIT && torque[1]<=2.0f);
     free_tx[0]=free_tx[1]=0;
     unsigned old_aborts=aborts, old_disable=disables[0];
     cmd.estop=true; step(1,true);
@@ -166,6 +166,10 @@ int main(void)
      * slow 0.25 rad/s slew the user reported. */
     CHECK(c.control.pitch_command_rate==GIMBAL_PITCH_MAX_RATE &&
           c.control.max_rate[1]==GIMBAL_PITCH_MAX_RATE);
+    /* Static stiffness settled at 150 N m/rad: 20/100 felt soft, 200 overshot
+     * on the real mechanism, so it was backed off to the last stable value.
+     * The 28 N m MIT cap remains the hard output limit. */
+    CHECK(c.control.pitch_hold_kp==150.0f);
     GimbalControl calibrated;
     CHECK(Gimbal_Init(&calibrated,&c.control));
     GimbalFeedback f={.joint_fresh=true};
@@ -331,7 +335,9 @@ int main(void)
         p.motor.pos=GIMBAL_PITCH_ZERO+direction*0.1f;
         p.last_rx_ms=now; y.last_rx_ms=now; step(5,true);
         CHECK(s.state==GIMBAL_ACTIVE && fabsf(s.output.target[1]-target)<1e-6f);
-        CHECK(direction*torque[1]<-2.0f); /* immediate restoring torque */
+        /* 0.1 rad against 150 N m/rad plus the rate-loop P term must command
+         * about 15 N m immediately, not the old 2 N m. */
+        CHECK(direction*torque[1]<-14.0f);
         float first=fabsf(torque[1]);
         for (unsigned i=0;i<100;++i) {
             p.last_rx_ms=now; y.last_rx_ms=now; step(5,true);

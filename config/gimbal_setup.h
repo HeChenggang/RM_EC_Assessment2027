@@ -67,11 +67,18 @@
  * against this same output limit, so it now only triggers near the motor
  * maximum. Hold the emergency stop ready during the first loaded test. */
 #define GIMBAL_PITCH_TORQUE_LIMIT DM4340_T_MAX
-#define GIMBAL_PITCH_SPEED_KP 2.0f
+/* Damping gain of the pitch rate loop. Doubled from 2.0 on 2026-11-17: the
+ * hold spring (150 N m/rad) only had angle_kp*Kp = 6 N m/(rad/s) of damping
+ * and still overshot on the real joint. Much higher values turn encoder
+ * differentiation noise into torque ripple. */
+#define GIMBAL_PITCH_SPEED_KP 4.0f
 #define GIMBAL_PITCH_SPEED_KI 2.0f
-/* Initial position stiffness, N m/rad; tune with the real loaded mechanism.
- * 0.1 rad displacement adds 2 N m immediately, inside the total torque cap. */
-#define GIMBAL_PITCH_HOLD_KP 20.0f
+/* Static position stiffness, N m/rad; tune with the real loaded mechanism.
+ * 0.1 rad displacement adds 15 N m immediately and reaches the 28 N m cap at
+ * about 0.18 rad; a held hand push trips the stall detector at about 0.16 rad.
+ * 200 overshot on the real mechanism, 150 is the last value without reported
+ * overshoot; keep the rate-loop damping when raising it again. */
+#define GIMBAL_PITCH_HOLD_KP 150.0f
 #define GIMBAL_PITCH_INTEGRAL_LIMIT (0.9f * DM4340_T_MAX)
 #define GIMBAL_PITCH_STALL_MS 1000U
 #define GIMBAL_PITCH_STALL_TRAVEL 0.005f
@@ -84,8 +91,13 @@
  * frozen target; raise angle_kp[1] if that feels loose on the real mechanism. */
 #define GIMBAL_PITCH_MAX_RATE 2.00f
 
-/* Build torque under sustained rate error without raising the proportional
- * gain. The DM-J4310-2EC peak torque is 7 N m and its rating is 3 N m. */
+/* Yaw rate loop. Kp was 1.2 until 2026-11-17. A release or reversal rebuilds
+ * the target from feedback and clears the integral, so braking then relies on
+ * Kp alone. 2.5 braked hard but the light yaw axis buzzed at the 5 ms loop
+ * period; 1.5 was still marginal and buzzed at one particular yaw angle, so
+ * the axis is back to 1.2, which is stable at every angle (release overshoot
+ * is then about 2 deg at 2 rad/s). The DM-J4310-2EC peak torque is 7 N m and
+ * its rating is 3 N m. */
 #define GIMBAL_YAW_SPEED_KP 1.2f
 #define GIMBAL_YAW_SPEED_KI 3.0f
 #define GIMBAL_YAW_TORQUE_LIMIT 7.00f
