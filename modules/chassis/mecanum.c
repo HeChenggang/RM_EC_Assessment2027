@@ -23,6 +23,29 @@ static bool factors(const Mecanum_Config *c, float *k, float *rpm_per_mps)
     return isfinite(*k) && *k > 0 && isfinite(*rpm_per_mps) && *rpm_per_mps > 0;
 }
 
+bool Mecanum_PrioritizeRotation(const Mecanum_Config *c, Mecanum_Velocity *v)
+{
+    float k, factor;
+    if (!factors(c, &k, &factor) || v == NULL ||
+        !isfinite(v->vx) || !isfinite(v->vy) || !isfinite(v->wz)) return false;
+    if (c->max_motor_rpm == 0.0f) return true;
+
+    /* Each translation term (vx +/- vy) is paired with both rotation signs,
+     * so the peak wheel speed is |vx| + |vy| + k*|wz| before conversion to rpm. */
+    const float wheel_limit = c->max_motor_rpm / factor;
+    const float translation = fabsf(v->vx) + fabsf(v->vy);
+    if (!isfinite(wheel_limit) || !isfinite(translation)) return false;
+    const float rotation = k * fabsf(v->wz);
+    const float remaining = fmaxf(0.0f, wheel_limit - rotation);
+    if (translation > remaining) {
+        const float scale = remaining / translation;
+        v->vx *= scale;
+        v->vy *= scale;
+    }
+    if (rotation > wheel_limit) v->wz = copysignf(wheel_limit / k, v->wz);
+    return true;
+}
+
 bool Mecanum_Inverse(const Mecanum_Config *c, const Mecanum_Velocity *v,
                      Mecanum_Wheels *out)
 {

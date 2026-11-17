@@ -29,7 +29,7 @@ FW = ROOT / "firmware/chassis"
 # flag -> (module source without extension, test file, instruction budget)
 CASES = {
     "--gimbal": ("gimbal/gimbal_drive", "test_gimbal_drive.c", 40000000),
-    "--logic": ("control/robot_control", "test_robot_logic.c", 50000000),
+    "--logic": ("control/robot_control", "test_robot_logic.c", 70000000),
     "--link": ("communication/board_link", "test_board_link.c", 10000000),
     "--attitude": ("imu/attitude", "test_attitude.c", 100000000),
     "--yaw": ("motor/yaw_motor", "test_yaw_motor.c", 2000000),

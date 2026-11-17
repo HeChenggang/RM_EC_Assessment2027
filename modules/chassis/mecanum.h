@@ -22,7 +22,7 @@ typedef struct {
     float radius_m;
     float reduction;       /* Motor rotor rpm / wheel rpm. */
     int8_t motor_direction[4]; /* Each +1 or -1; verify on the real robot. */
-    float max_motor_rpm;   /* Common proportional speed limit; 0 disables. */
+    float max_motor_rpm;   /* Absolute rotor speed limit; 0 disables. */
 } Mecanum_Config;
 
 typedef struct {
@@ -34,6 +34,9 @@ typedef struct {
  * Directions +1 are mathematical defaults, NOT hardware calibration. */
 extern const Mecanum_Config MECANUM_DEFAULT_CONFIG;
 
+/* Fit a velocity to the wheel speed limit before inverse kinematics. Scale
+ * translation uniformly and reduce rotation only if pure rotation is too fast. */
+bool Mecanum_PrioritizeRotation(const Mecanum_Config *config, Mecanum_Velocity *velocity);
 /* No HAL/state/allocation. Invalid input or overflow returns false and zeros
  * output. Use separate input/output objects (no aliasing).
  * Caller handles feedback freshness, arming and PID/current control. */

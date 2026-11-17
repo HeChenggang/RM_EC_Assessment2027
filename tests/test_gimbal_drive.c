@@ -281,7 +281,7 @@ int main(void)
         cmd.yaw=(float)direction;
         feedback(1); step(5,true);
         CHECK(torque[0]*cmd.yaw>0 && fabsf(torque[0])<0.1f);
-        for (unsigned i=0; i<220; ++i) {
+        for (unsigned i=0; i<400; ++i) {
             feedback(1); step(5,true);
             CHECK(s.state==GIMBAL_ACTIVE && fabsf(torque[0])<=GIMBAL_YAW_TORQUE_LIMIT);
         }

@@ -96,12 +96,12 @@
  * Kp alone. 2.5 braked hard but the light yaw axis buzzed at the 5 ms loop
  * period; 1.5 was still marginal and buzzed at one particular yaw angle, so
  * the axis is back to 1.2, which is stable at every angle (release overshoot
- * is then about 2 deg at 2 rad/s). The DM-J4310-2EC peak torque is 7 N m and
- * its rating is 3 N m. */
+ * was then about 2 deg at 2 rad/s; the full-stick rate is now 1.5 rad/s). The
+ * DM-J4310-2EC peak torque is 7 N m and its rating is 3 N m. */
 #define GIMBAL_YAW_SPEED_KP 1.2f
 #define GIMBAL_YAW_SPEED_KI 3.0f
 #define GIMBAL_YAW_TORQUE_LIMIT 7.00f
-#define GIMBAL_YAW_MAX_RATE 2.00f /* rad/s, full-stick heading rate and outer-loop limit */
+#define GIMBAL_YAW_MAX_RATE 1.50f /* rad/s, full-stick heading rate and outer-loop limit */
 /* Allow full torque at maximum rate reference with zero measured speed. */
 #define GIMBAL_YAW_INTEGRAL_LIMIT (GIMBAL_YAW_TORQUE_LIMIT - GIMBAL_YAW_SPEED_KP * GIMBAL_YAW_MAX_RATE)
 

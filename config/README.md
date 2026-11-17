@@ -7,9 +7,9 @@
 | 两块 RoboMaster C 板 | STM32F407IGH6，CAN1 互连，1 Mbit/s | [固件工程](../firmware/README.md) |
 | 麦轮底盘 | 左右轮距 0.45 m，前后轮距 0.55 m，轮半径 0.07786 m，减速比 14:1，45° X 型模型 | [mecanum.c](../modules/chassis/mecanum.c) |
 | M3508 / C620 | 下板 CAN2，左前／左后／右后／右前 ID 1／2／3／4，方向 +1／+1／−1／−1 | [chassis_setup.h](../firmware/chassis/Core/Inc/chassis_setup.h) |
-| 底盘速度环 | 3000 rpm，原始电流上限 ±4000，Kp=4、Ki=3、Kd=0，积分贡献 ±650 | 同上 |
+| 底盘速度环 | 分离和跟随档转子限速 3000 rpm，小陀螺档 4500 rpm。原始电流上限 ±4000，Kp=4、Ki=3、Kd=0，积分贡献 ±650 | 同上 |
 | 底盘指令 | 平移上限 1.80 m/s，加速度 1.20 m/s²，松杆立即给零平移目标。跟随 Kp=5.5，角加速度 4.00 rad/s²，按偏角提前减速。跟随转速上限和小陀螺设定均为 3.00 rad/s | 同上 |
-| Yaw DM-J4310 | 上板 CAN1，TX 0x03、RX 0x13，方向 +1，零位 −0.697036878 rad，输出上限 7.00 N·m（峰值，额定 3.00 N·m），速度环 Kp=1.5、Ki=3.0，速度参考上限 2.00 rad/s | [gimbal_board.h](gimbal_board.h)、[gimbal_setup.h](gimbal_setup.h) |
+| Yaw DM-J4310 | 上板 CAN1，TX 0x03、RX 0x13，方向 +1，零位 −0.697036878 rad，输出上限 7.00 N·m（峰值，额定 3.00 N·m），速度环 Kp=1.2、Ki=3.0，速度参考上限 1.50 rad/s | [gimbal_board.h](gimbal_board.h)、[gimbal_setup.h](gimbal_setup.h) |
 | Pitch DM-J4340 | 上板 CAN2，TX 0x09、RX 0x19，方向 −1，原始零位 −0.184 rad。原始边界 0.074 和 −1.143 rad，对应 −0.258 到 +0.959 rad。速度参考上限 2.00 rad/s（与 Yaw 同级，`GIMBAL_PITCH_MAX_RATE`），静止保持刚度 150 N·m/rad（`GIMBAL_PITCH_HOLD_KP`），输出上限 28 N·m | 同上 |
 | BMI088 | 上板 SPI1，安装变换为单位矩阵，固定零偏 0 °/s。代码记录俯视逆时针对应正 Yaw，静态漂移约 +0.19°/10.1 s | 同上 |
 

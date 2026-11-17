@@ -203,6 +203,7 @@ static bool InitChassisControl(void)
     .max_translation = CHASSIS_TRANSLATION_LIMIT_MPS,
     .max_rotation = CHASSIS_MAX_ROTATION_RAD_S,
     .spin_rate = CHASSIS_SPIN_RATE_RAD_S, .follow_kp = CHASSIS_FOLLOW_KP,
+    .spin_max_motor_rpm = CHASSIS_SPIN_MAX_ROTOR_RPM,
     .translation_accel = CHASSIS_TRANSLATION_ACCEL_MPS2,
     .rotation_accel = 1.0f,
     .follow_rotation_accel = CHASSIS_FOLLOW_ROTATION_ACCEL_RAD_S2,

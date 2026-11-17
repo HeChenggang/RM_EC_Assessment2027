@@ -318,6 +318,7 @@ int main(void)
     cc.translation_accel = CHASSIS_TRANSLATION_ACCEL_MPS2;
     cc.max_rotation = CHASSIS_MAX_ROTATION_RAD_S;
     cc.spin_rate = CHASSIS_SPIN_RATE_RAD_S;
+    cc.spin_max_motor_rpm = CHASSIS_SPIN_MAX_ROTOR_RPM;
     cc.follow_kp = CHASSIS_FOLLOW_KP;
     cc.follow_rotation_accel = CHASSIS_FOLLOW_ROTATION_ACCEL_RAD_S2;
     cc.geometry.max_motor_rpm = CHASSIS_MAX_ROTOR_RPM;
@@ -398,7 +399,33 @@ int main(void)
     CHECK(NEAR(hypotf(drive.velocity.vx, drive.velocity.vy), 0.60f, 0.001f));
     CHECK(NEAR(drive.wheels.scale, 1.0f, 0.001f));
 
-    Chassis_Reset(&robot.chassis);
+    /* Spin up with centered sticks, then push diagonally and release while
+     * the gimbal holds its world heading. Recover rotation from all four
+     * wheel targets to catch reductions hidden by the requested velocity. */
+    ChassisConfig spin_config = cc;
+    spin_config.rotation_accel = 1.0f; /* same as the lower-board firmware */
+    CHECK(Chassis_Init(&robot.chassis, &spin_config));
+    cmd = (RobotCommand){.remote_valid = true, .arm = true, .mode = MODE_SPIN};
+    float relative_yaw = 0.0f;
+    const float spin_dt = 0.02f;
+    for (unsigned step = 0; step < 350; ++step) {
+        cmd.forward = cmd.left = step >= 160 && step < 310 ? 1.0f : 0.0f;
+        CHECK(Chassis_Step(&robot.chassis, &cmd, relative_yaw, stopped_rpm, fresh, true, spin_dt, &drive));
+        Mecanum_Velocity applied;
+        CHECK(Mecanum_Forward(&cc.geometry, drive.wheels.motor_rpm, &applied));
+        if (step >= 155) CHECK(NEAR(applied.wz, cc.spin_rate, 0.001f));
+        if (step >= 210 && step < 310) {
+            CHECK(hypotf(applied.vx, applied.vy) > 0.78f);
+            CHECK(hypotf(applied.vx, applied.vy) < 1.13f);
+            CHECK(Motion_Rotate(applied.vx, applied.vy, -relative_yaw, &x, &y));
+            CHECK(NEAR(x, y, 0.01f) && x > 0);
+        }
+        for (unsigned i = 0; i < 4; ++i)
+            CHECK(fabsf(drive.wheels.motor_rpm[i]) <= CHASSIS_SPIN_MAX_ROTOR_RPM + 0.001f);
+        relative_yaw = Motion_Wrap(relative_yaw - applied.wz * spin_dt);
+    }
+
+    CHECK(Chassis_Init(&robot.chassis, &cc));
     cmd = (RobotCommand){.remote_valid = true, .arm = true, .mode = MODE_FOLLOW};
     for (unsigned step = 0; step < 50; ++step)
         CHECK(Chassis_Step(&robot.chassis, &cmd, MOTION_PI / 6, stopped_rpm, fresh, true, 0.01f, &drive));

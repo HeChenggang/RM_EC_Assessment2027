@@ -42,6 +42,15 @@ int main(void)
     CHECK(Mecanum_Forward(&c, w.motor_rpm, &measured));
     CHECK(NEAR(measured.vx, v.vx*w.scale) && NEAR(measured.vy, v.vy*w.scale));
     CHECK(NEAR(measured.wz, v.wz*w.scale));
+    v = (Mecanum_Velocity){1, -2, -1};
+    CHECK(Mecanum_PrioritizeRotation(&c, &v) && v.wz == -1);
+    CHECK(v.vx > 0 && NEAR(v.vy, -2 * v.vx));
+    CHECK(Mecanum_Inverse(&c, &v, &w) && NEAR(w.scale, 1));
+    CHECK(Mecanum_Forward(&c, w.motor_rpm, &measured) && NEAR(measured.wz, -1));
+    v = (Mecanum_Velocity){1, 1, -2};
+    CHECK(Mecanum_PrioritizeRotation(&c, &v) && v.vx == 0 && v.vy == 0);
+    CHECK(Mecanum_Inverse(&c, &v, &w) && NEAR(w.scale, 1));
+    for (unsigned i = 0; i < 4; ++i) CHECK(NEAR(fabsf(w.motor_rpm[i]), 1000));
     c.radius_m = 0;
     CHECK(!Mecanum_Inverse(&c, &v, &w) && w.scale == 0);
     c = MECANUM_DEFAULT_CONFIG; c.motor_direction[1] = 0;

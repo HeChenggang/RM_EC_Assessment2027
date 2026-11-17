@@ -10,11 +10,13 @@ typedef struct {
     PID_Config wheel_pid[4];
     float max_translation, max_rotation, spin_rate, follow_kp;
     float translation_accel, rotation_accel, follow_rotation_accel, max_dt;
+    float spin_max_motor_rpm; /* 0 uses geometry.max_motor_rpm. */
 } ChassisConfig;
 typedef struct {
     ChassisConfig config;
     PID_Controller wheel[4];
     Mecanum_Velocity previous;
+    float previous_yaw;
     float previous_target_rpm[4];
     bool configured;
 } ChassisControl;

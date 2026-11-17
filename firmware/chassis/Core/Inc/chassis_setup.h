@@ -5,6 +5,7 @@
  * Initial floor-test limits, not a final tuned configuration. */
 #define CHASSIS_WHEEL_DIRECTIONS {+1, +1, -1, -1}
 #define CHASSIS_MAX_ROTOR_RPM 3000.0f
+#define CHASSIS_SPIN_MAX_ROTOR_RPM 4500.0f
 /* Loaded strafing saturated at 2000 raw while some wheels stayed near zero. */
 #define CHASSIS_CURRENT_LIMIT_RAW 4000.0f
 #define CHASSIS_SPEED_KP 4.0f
