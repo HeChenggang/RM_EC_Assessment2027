@@ -99,7 +99,7 @@ temp  [degC]  = raw11 * 0.125 + 23
 - spread_dps 为三轴最大峰峰值，上限 20 °/s。window_ms 供检查采样耗时及主循环是否漏采。
 - 历史静止记录出现 4.46 °/s 的峰峰值。此前 2 和 4 °/s 的峰峰值门槛都曾拒绝静止窗口，详见[调试记录](../../docs/debug-log.md)。
 
-当前双板主程序均未启动该标定 API。上板世界航向联调使用固定零偏 0 °/s，分离档使用关节反馈。考核要求启动阶段仅发送零指令或保持失能，现有启动门控缺口见[验收清单](../../docs/acceptance.md)。
+当前上板世界航向使用固定零偏 0 °/s，测量零偏的 API 供标定时调用。分离档采用关节角反馈。启动及使能流程见[云台固件说明](../../firmware/gimbal/README.md)。
 
 ## 接口速查
 
@@ -133,5 +133,5 @@ python tests/run_motor_tests.py --imu
 
 上板用 Attitude_Update 计算姿态，采用单位安装矩阵，俯视逆时针已记录为正 Yaw。代码记录静态航向约 +0.19°/10.1 s。六轴融合没有绝对航向参考，运行中仍会漂移。TIM10 加热 PWM 未启动，温度换算尚未做实物比对。
 
-参考：[RoboMaster C 板用户手册](https://rm-static.djicdn.com/tem/35228/RoboMaster%20%20%E5%BC%80%E5%8F%91%E6%9D%BF%20C%20%E5%9E%8B%E7%94%A8%E6%88%B7%E6%89%8B%E5%86%8C.pdf)、
+参考：[RoboMaster C 型开发板手册](https://rm-static.djicdn.com/tem/35228/RoboMaster%20%20%E5%BC%80%E5%8F%91%E6%9D%BF%20C%20%E5%9E%8B%E7%94%A8%E6%88%B7%E6%89%8B%E5%86%8C.pdf)、
 [Bosch BMI088 数据手册](https://www.bosch-sensortec.com/media/boschsensortec/downloads/datasheets/bst-bmi088-ds001.pdf)。
