@@ -8,7 +8,10 @@ void Gimbal_Reset(GimbalControl *s)
     if (s == NULL) return;
     s->tracking = false;
     s->yaw_input_direction = 0;
+    s->yaw_previous_rate_limit = 0.0f;
     s->yaw_world = false;
+    s->yaw_chassis_rate_valid = false;
+    s->yaw_chassis_rate = 0;
     s->spin_elapsed = s->yaw_last = s->yaw_travel = 0;
     s->spin_limit = GIMBAL_SPIN_WITHIN_LIMITS;
     s->target[0] = s->target[1] = 0;
@@ -21,6 +24,10 @@ bool Gimbal_Init(GimbalControl *s, const GimbalConfig *config)
     *s = (GimbalControl){0};
     if (!isfinite(c.pitch_min) || !isfinite(c.pitch_max) || c.pitch_min >= c.pitch_max ||
         c.pitch_min <= -MOTION_PI / 2 || c.pitch_max >= MOTION_PI / 2 ||
+        !isfinite(c.yaw_hold_max_rate) || c.yaw_hold_max_rate < 0 ||
+        !isfinite(c.yaw_hold_angle_kp) || c.yaw_hold_angle_kp < 0 ||
+        !isfinite(c.yaw_hold_integral_limit) || c.yaw_hold_integral_limit < 0 ||
+        !isfinite(c.yaw_joint_rate_tau) || c.yaw_joint_rate_tau < 0 ||
         !isfinite(c.pitch_hold_kp) || c.pitch_hold_kp < 0 ||
         !isfinite(c.max_dt) || c.max_dt <= 0 || !isfinite(c.yaw_command_rate) ||
         c.yaw_command_rate <= 0 || !isfinite(c.pitch_command_rate) || c.pitch_command_rate <= 0 ||
@@ -57,6 +64,22 @@ bool Gimbal_Step(GimbalControl *s, const RobotCommand *cmd,
         rate[i] = world ? f->world_rate[i] : f->joint_rate[i];
         if (!isfinite(measured[i]) || !isfinite(rate[i])) goto stop;
     }
+    const bool use_gyro = !yaw_world && c->yaw_joint_rate_tau > 0.0f &&
+        f->world_fresh && isfinite(f->world_rate[0]);
+    if (use_gyro) {
+        /* World rate minus joint rate estimates chassis rotation. Filter that
+         * difference so gear oscillations in motor rate do not drive torque. */
+        const float chassis_rate = f->world_rate[0] - rate[0];
+        if (!isfinite(chassis_rate)) goto stop;
+        if (s->yaw_chassis_rate_valid) {
+            const float weight = dt / (c->yaw_joint_rate_tau + dt);
+            s->yaw_chassis_rate += weight * (chassis_rate - s->yaw_chassis_rate);
+        } else {
+            s->yaw_chassis_rate = chassis_rate;
+        }
+        rate[0] = f->world_rate[0] - s->yaw_chassis_rate;
+    }
+    s->yaw_chassis_rate_valid = use_gyro;
     if (!s->tracking) {
         s->target[0] = Motion_Wrap(measured[0]); s->target[1] = measured[1];
         s->yaw_last = f->joint[0];
@@ -93,15 +116,28 @@ bool Gimbal_Step(GimbalControl *s, const RobotCommand *cmd,
         PID_Reset(&s->rate[0]);
         s->yaw_input_direction = yaw_direction;
     }
+    /* A held displacement can saturate the angle loop without saturating
+     * motor torque. Bound the stored drive before the external load lets go. */
+    const float yaw_integral_limit = c->rate_pid[0].integral_limit;
+    s->rate[0].config.integral_limit = yaw_direction == 0 && c->yaw_hold_integral_limit > 0.0f
+        ? fminf(yaw_integral_limit, c->yaw_hold_integral_limit) : yaw_integral_limit;
+    const float yaw_rate_limit = fabsf(cmd->yaw) * c->max_rate[0];
     if (yaw_direction != 0) {
-        /* Once the outer loop reaches its rate cap, more angle error adds
-         * no authority. Bound it before wrapping to avoid a sign flip at pi. */
-        const float max_error = fminf(c->max_rate[0] / c->angle_kp[0], MOTION_PI / 2.0f);
+        /* Shrink the stored heading lead as the stick returns to center so
+         * the rate reference falls before the stick enters the dead zone. */
+        const float max_error = fminf(yaw_rate_limit / c->angle_kp[0], MOTION_PI / 2.0f);
         const float step = cmd->yaw * c->yaw_command_rate * dt;
         if (!isfinite(step)) goto stop;
         const float error = Motion_Wrap(s->target[0] - yaw_angle);
         s->target[0] = Motion_Wrap(yaw_angle + Motion_Clamp(error + step, max_error));
+        /* As the stick backs off, shed drive torque that would oppose braking.
+         * Keep the integral when the joint is still below the requested limit. */
+        if (yaw_rate_limit < s->yaw_previous_rate_limit &&
+            yaw_direction * rate[0] > yaw_rate_limit && yaw_direction * s->rate[0].i > 0.0f) {
+            s->rate[0].i *= yaw_rate_limit / s->yaw_previous_rate_limit;
+        }
     }
+    s->yaw_previous_rate_limit = yaw_rate_limit;
     s->target[1] += cmd->pitch * c->pitch_command_rate * dt;
     /* Local aligned-axis relationship: change in world pitch = change in
      * joint pitch at this instant. Clamp the corresponding joint target. */
@@ -114,9 +150,14 @@ bool Gimbal_Step(GimbalControl *s, const RobotCommand *cmd,
     for (unsigned i = 0; i < 2; ++i) {
         const float error = i == 0 ? Motion_Wrap(s->target[i] - measured[i]) : s->target[i] - measured[i];
         result.target[i] = s->target[i];
-        const float requested = c->angle_kp[i] * error;
+        const bool yaw_hold = i == 0 && yaw_direction == 0;
+        const float angle_kp = yaw_hold && c->yaw_hold_angle_kp > 0.0f
+            ? c->yaw_hold_angle_kp : c->angle_kp[i];
+        const float rate_limit = yaw_hold && c->yaw_hold_max_rate > 0.0f
+            ? fminf(c->yaw_hold_max_rate, c->max_rate[0]) : c->max_rate[i];
+        const float requested = angle_kp * error;
         if (!isfinite(requested)) goto stop;
-        result.rate[i] = Motion_Clamp(requested, c->max_rate[i]);
+        result.rate[i] = Motion_Clamp(requested, rate_limit);
         /* Pitch stiffness reacts immediately to displacement, without the
          * outer rate cap weakening it. Retain velocity damping and integral
          * load compensation, with one shared torque/anti-windup limit. */

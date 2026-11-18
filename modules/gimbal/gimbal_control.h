@@ -10,6 +10,10 @@ typedef struct {
     float yaw_command_rate, pitch_command_rate, angle_kp[2], max_dt;
     PID_Config rate_pid[2]; /* output is torque, configured per actual motor */
     float max_rate[2];
+    float yaw_hold_max_rate; /* rad/s while neutral; 0 uses max_rate[0]. */
+    float yaw_hold_angle_kp; /* Outer-loop gain at neutral; 0 uses angle_kp[0]. */
+    float yaw_hold_integral_limit; /* N m while neutral; 0 uses the rate PID limit. */
+    float yaw_joint_rate_tau; /* Seconds for chassis rate estimate; 0 uses motor rate alone. */
     float pitch_hold_kp; /* N m/rad, direct position stiffness; zero disables */
     GimbalSpace space[2]; /* yaw,pitch; allows joint/world/mixed control */
     float spin_max_time, spin_max_travel; /* seconds/rad per armed session; 0 disables each limit */
@@ -24,8 +28,11 @@ typedef struct {
     PID_Controller rate[2];
     float target[2];
     int yaw_input_direction;
+    float yaw_previous_rate_limit;
     bool configured, tracking;
     bool yaw_world;
+    bool yaw_chassis_rate_valid;
+    float yaw_chassis_rate;
     float spin_elapsed, yaw_last, yaw_travel;
     GimbalSpinLimit spin_limit; /* Set on a spin-limit failure, cleared by reset. */
 } GimbalControl;

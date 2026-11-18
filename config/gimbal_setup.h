@@ -61,11 +61,7 @@
 /* User reported that the 2 N m commissioning cap still cannot raise the
  * barrel and asked to remove the torque cap. The rate loop may now command up
  * to the motor MIT mapping maximum; the integral contribution is scaled with
- * it (0.9x) instead of clamping the steady-state holding torque near 2 N m.
- * Joint limits, outward-torque blocking, the loaded-stall stop and the
- * command/feedback watchdogs remain active. The stall detector compares
- * against this same output limit, so it now only triggers near the motor
- * maximum. Hold the emergency stop ready during the first loaded test. */
+ * it (0.9x) instead of clamping the steady-state holding torque near 2 N m. */
 #define GIMBAL_PITCH_TORQUE_LIMIT DM4340_T_MAX
 /* Damping gain of the pitch rate loop. Doubled from 2.0 on 2026-11-17: the
  * hold spring (150 N m/rad) only had angle_kp*Kp = 6 N m/(rad/s) of damping
@@ -75,33 +71,29 @@
 #define GIMBAL_PITCH_SPEED_KI 2.0f
 /* Static position stiffness, N m/rad; tune with the real loaded mechanism.
  * 0.1 rad displacement adds 15 N m immediately and reaches the 28 N m cap at
- * about 0.18 rad; a held hand push trips the stall detector at about 0.16 rad.
+ * about 0.18 rad.
  * 200 overshot on the real mechanism, 150 is the last value without reported
  * overshoot; keep the rate-loop damping when raising it again. */
 #define GIMBAL_PITCH_HOLD_KP 150.0f
 #define GIMBAL_PITCH_INTEGRAL_LIMIT (0.9f * DM4340_T_MAX)
-#define GIMBAL_PITCH_STALL_MS 1000U
-#define GIMBAL_PITCH_STALL_TRAVEL 0.005f
-#define GIMBAL_PITCH_STALL_ERROR 0.05f
-/* Full-stick pitch rate and outer-loop limit, rad/s. Same cap as yaw so both
- * axes feel alike and stay well below the joint travel budget that the angle
- * loop can track (angle_kp * travel = 3 * 1.217 rad/s). At 2.00 rad/s the
+/* Full-stick pitch rate and outer-loop limit, rad/s. At 2.00 rad/s the
  * target leads the measured angle by rate / angle_kp = 0.67 rad while the
  * stick is held, so a release lets the joint glide about 0.2 rad to the
  * frozen target; raise angle_kp[1] if that feels loose on the real mechanism. */
 #define GIMBAL_PITCH_MAX_RATE 2.00f
 
-/* Yaw rate loop. Kp was 1.2 until 2026-11-17. A release or reversal rebuilds
- * the target from feedback and clears the integral, so braking then relies on
- * Kp alone. 2.5 braked hard but the light yaw axis buzzed at the 5 ms loop
- * period; 1.5 was still marginal and buzzed at one particular yaw angle, so
- * the axis is back to 1.2, which is stable at every angle (release overshoot
- * was then about 2 deg at 2 rad/s; the full-stick rate is now 1.5 rad/s). The
- * DM-J4310-2EC peak torque is 7 N m and its rating is 3 N m. */
-#define GIMBAL_YAW_SPEED_KP 1.2f
+/* Higher rate-loop Kp caused oscillation on hardware. At neutral, use a
+ * higher angle-loop gain to correct heading drift after release.
+ * The DM-J4310-2EC peak torque is 7 N m and its rating is 3 N m. */
+#define GIMBAL_YAW_SPEED_KP 1.20f
 #define GIMBAL_YAW_SPEED_KI 3.0f
+#define GIMBAL_YAW_HOLD_ANGLE_KP 8.0f
+#define GIMBAL_YAW_HOLD_INTEGRAL_LIMIT 0.35f /* N m at neutral */
+/* Time constant for estimating chassis rotation from IMU and joint rates. */
+#define GIMBAL_YAW_JOINT_RATE_TAU 0.04f
 #define GIMBAL_YAW_TORQUE_LIMIT 7.00f
-#define GIMBAL_YAW_MAX_RATE 1.50f /* rad/s, full-stick heading rate and outer-loop limit */
+#define GIMBAL_YAW_MAX_RATE 2.00f /* rad/s, full-stick heading rate and outer-loop limit */
+#define GIMBAL_YAW_HOLD_MAX_RATE 1.00f /* rad/s, return to the neutral hold target */
 /* Allow full torque at maximum rate reference with zero measured speed. */
 #define GIMBAL_YAW_INTEGRAL_LIMIT (GIMBAL_YAW_TORQUE_LIMIT - GIMBAL_YAW_SPEED_KP * GIMBAL_YAW_MAX_RATE)
 
@@ -119,6 +111,10 @@ static inline GimbalDriveConfig GimbalSetup_Config(void)
                         .output_limit=GIMBAL_PITCH_TORQUE_LIMIT,
                         .integral_limit=GIMBAL_PITCH_INTEGRAL_LIMIT,.max_dt=0.02f}},
             .max_rate={GIMBAL_YAW_MAX_RATE,GIMBAL_PITCH_MAX_RATE},
+            .yaw_hold_max_rate=GIMBAL_YAW_HOLD_MAX_RATE,
+            .yaw_hold_angle_kp=GIMBAL_YAW_HOLD_ANGLE_KP,
+            .yaw_hold_integral_limit=GIMBAL_YAW_HOLD_INTEGRAL_LIMIT,
+            .yaw_joint_rate_tau=GIMBAL_YAW_JOINT_RATE_TAU,
             .pitch_hold_kp=GIMBAL_PITCH_HOLD_KP,
             .space={GIMBAL_YAW_WORLD ? GIMBAL_WORLD : GIMBAL_JOINT, GIMBAL_JOINT},
             .spin_max_time=GIMBAL_SPIN_MAX_TIME_S, .spin_max_travel=GIMBAL_SPIN_MAX_TRAVEL_RAD},
@@ -129,10 +125,7 @@ static inline GimbalDriveConfig GimbalSetup_Config(void)
             GIMBAL_YAW_TMAX >= GIMBAL_YAW_TORQUE_LIMIT),
         .spin_hardware_confirmed=GIMBAL_IMU_MOUNT_CONFIRMED && GIMBAL_YAW_ZERO_CONFIRMED,
         .follow_hardware_confirmed=GIMBAL_IMU_MOUNT_CONFIRMED && GIMBAL_YAW_ZERO_CONFIRMED,
-        .pitch_only=GIMBAL_PITCH_ONLY_TEST,
-        .pitch_stall_ms=GIMBAL_PITCH_STALL_MS,
-        .pitch_stall_travel=GIMBAL_PITCH_STALL_TRAVEL,
-        .pitch_stall_error=GIMBAL_PITCH_STALL_ERROR};
+        .pitch_only=GIMBAL_PITCH_ONLY_TEST};
     return config;
 }
 #endif

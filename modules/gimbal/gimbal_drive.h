@@ -10,7 +10,8 @@ typedef enum {
 } GimbalDriveState;
 typedef enum { GIMBAL_OK, GIMBAL_CONFIG, GIMBAL_LINK, GIMBAL_FEEDBACK,
                GIMBAL_LIMIT, GIMBAL_TX, GIMBAL_ENABLE_TIMEOUT, GIMBAL_TIMING,
-               GIMBAL_STALL, GIMBAL_SPIN_TIME, GIMBAL_SPIN_TRAVEL } GimbalDriveFault;
+               /* Fault code 8 is reserved for older firmware logs. */
+               GIMBAL_SPIN_TIME = 9, GIMBAL_SPIN_TRAVEL } GimbalDriveFault;
 typedef struct {
     GimbalConfig control;
     float pitch_zero;
@@ -19,8 +20,6 @@ typedef struct {
     bool spin_hardware_confirmed; /* IMU mounting and chassis-relative zero */
     bool follow_hardware_confirmed; /* same calibration, independent mode gate */
     bool pitch_only; /* Commission Pitch without enabling/commanding Yaw. */
-    uint32_t pitch_stall_ms;
-    float pitch_stall_travel, pitch_stall_error; /* rad; both positive */
 } GimbalDriveConfig;
 typedef struct {
     GimbalControl control;
@@ -33,9 +32,6 @@ typedef struct {
     uint32_t last_step, phase_started, last_stop, enable_count[2];
     bool configured, ready, stop_sent;
     GimbalDriveFault last_fault; /* Retained across disarm; clears on next arm attempt. */
-    bool pitch_stall_tracking;
-    uint32_t pitch_stall_started;
-    float pitch_stall_position;
     /* Attitude adapter output for a WORLD yaw axis; see GimbalDrive_SetWorld. */
     float world_yaw, world_rate;
     uint32_t world_ms;

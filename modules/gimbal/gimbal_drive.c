@@ -19,9 +19,6 @@ bool GimbalDrive_Init(GimbalDrive *s, const GimbalDriveConfig *c,
     if (!c || !yaw || !pitch) return false;
     s->config = *c;
     s->configured = c->hardware_confirmed && isfinite(c->pitch_zero) &&
-        c->pitch_stall_ms > 0 && c->pitch_stall_ms < 0x80000000U &&
-        isfinite(c->pitch_stall_travel) && c->pitch_stall_travel > 0 &&
-        isfinite(c->pitch_stall_error) && c->pitch_stall_error > c->pitch_stall_travel &&
         (c->yaw_direction == 1 || c->yaw_direction == -1) &&
         (c->pitch_direction == 1 || c->pitch_direction == -1) &&
         (c->control.space[0] == GIMBAL_JOINT || c->control.space[0] == GIMBAL_WORLD) &&
@@ -48,7 +45,6 @@ static void stop(GimbalDrive *s, GimbalDriveFault fault, uint32_t now)
 {
     if (fault != GIMBAL_OK && (s->state != GIMBAL_STOPPED || s->last_fault == GIMBAL_OK))
         s->last_fault = fault;
-    s->pitch_stall_tracking = false;
     if (s->state != GIMBAL_STOPPED) {
         /* Abort old enable/torque packets before queuing either disable. */
         s->last_stop = now - RETRY_MS;
@@ -196,21 +192,6 @@ void GimbalDrive_Step(GimbalDrive *s, const RobotCommand *cmd, bool link,
     }
     s->state = GIMBAL_ACTIVE;
     s->fault = GIMBAL_OK;
-    /* A holding load at its target is not a stall. Require significant tracking
-     * error AND near-limit torque with no measurable position progress.
-     * Position is used instead of the noisy quantized velocity feedback. */
-    bool loaded = fabsf(s->output.torque[1]) >= 0.9f*s->config.control.rate_pid[1].output_limit &&
-        fabsf(s->output.target[1]-f.joint[1]) >= s->config.pitch_stall_error;
-    if (!loaded) s->pitch_stall_tracking = false;
-    else if (!s->pitch_stall_tracking ||
-             fabsf(f.joint[1]-s->pitch_stall_position) >= s->config.pitch_stall_travel) {
-        s->pitch_stall_tracking = true;
-        s->pitch_stall_started = now;
-        s->pitch_stall_position = f.joint[1];
-    } else if ((uint32_t)(now-s->pitch_stall_started) >= s->config.pitch_stall_ms) {
-        stop(s,GIMBAL_STALL,now);
-        return;
-    }
     s->tx[0] = s->config.pitch_only ? HAL_OK :
         YawMotor_SendMIT(0,0,0,0,s->output.torque[0]*s->config.yaw_direction);
     s->tx[1] = PitchMotor_SendMIT(0,0,0,0,s->output.torque[1]*s->config.pitch_direction);

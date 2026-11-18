@@ -1,5 +1,6 @@
 #include "gimbal_drive.h"
 #include "gimbal_setup.h"
+#include "motion_math.h"
 #include <math.h>
 #define CHECK(x) do { if (!(x)) return __LINE__; } while (0)
 
@@ -162,8 +163,7 @@ int main(void)
     c=GimbalSetup_Config();
     CHECK(fabsf(c.control.pitch_min-(-0.258f))<0.00001f);
     CHECK(fabsf(c.control.pitch_max-0.959f)<0.00001f);
-    /* Full-stick pitch speed matches yaw; a regression here reintroduces the
-     * slow 0.25 rad/s slew the user reported. */
+    /* Retain the 2 rad/s full-stick pitch reference. */
     CHECK(c.control.pitch_command_rate==GIMBAL_PITCH_MAX_RATE &&
           c.control.max_rate[1]==GIMBAL_PITCH_MAX_RATE);
     /* Static stiffness settled at 150 N m/rad: 20/100 felt soft, 200 overshot
@@ -195,11 +195,6 @@ int main(void)
     CHECK(fabsf(c.control.rate_pid[1].integral_limit-0.9f*DM4340_T_MAX)<0.01f);
     /* Preserve coverage of the optional Pitch-only commissioning mode. */
     c.pitch_only=true;
-    /* Keep the legacy 2 N m wall in this scenario: the stall-window and
-     * holding-torque timings below are calibrated around it. The production
-     * cap is covered by the dedicated case at the end of main. */
-    c.control.rate_pid[1].output_limit=2.0f;
-    c.control.rate_pid[1].integral_limit=1.8f;
     CHECK(GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
     unsigned yaw_enable_before=enables[0], yaw_control_before=controls[0];
     cmd.arm=false; step(20,true); cmd.arm=true; step(5,true); step(5,true);
@@ -210,43 +205,15 @@ int main(void)
     cmd.pitch=1; cmd.yaw=1; p.last_rx_ms=now; ++p.rx_count; step(5,true);
     CHECK(torque[1]<0 && s.output.torque[0]==0);
     CHECK(enables[0]==yaw_enable_before && controls[0]==yaw_control_before);
-    /* Integral can reach the legacy 2 N m cap before the bounded stall window expires. */
-    for (unsigned i=0;i<1000 && torque[1]>-1.95f;++i) {
-        p.motor.pos=GIMBAL_PITCH_ZERO; p.motor.vel=0;
-        p.last_rx_ms=now; ++p.rx_count; step(5,true);
-    }
-    CHECK(s.state==GIMBAL_ACTIVE && torque[1]<=-1.95f && torque[1]>=-2.0f);
-    /* Progress under high load refreshes the window instead of false-tripping. */
-    for (unsigned i=0;i<240;++i) {
-        p.motor.pos-=0.001f; p.last_rx_ms=now; ++p.rx_count; step(5,true);
-        CHECK(s.state==GIMBAL_ACTIVE && fabsf(torque[1])<=2.0f);
-    }
-    /* Freeze a loaded axis, including a millisecond-counter wrap. */
-    now=0xffffff00U; s.last_step=now; s.pitch_stall_tracking=false;
-    for (unsigned i=0;i<220 && s.state==GIMBAL_ACTIVE;++i) {
-        p.last_rx_ms=now; ++p.rx_count; step(5,true);
-    }
-    CHECK(s.state==GIMBAL_STOPPED && s.fault==GIMBAL_STALL);
-    CHECK(torque[1]==0 && s.control.rate[1].i==0);
-    step(5,true); CHECK(s.state==GIMBAL_STOPPED); /* held arm never resumes */
-    cmd=(RobotCommand){.remote_valid=true}; step(20,true);
-    CHECK(s.last_fault==GIMBAL_STALL); /* survives return to disarm */
-    cmd.arm=true; step(5,true); step(5,true);
-    p.motor.pos=GIMBAL_PITCH_ZERO; p.last_rx_ms=now; ++p.rx_count; step(5,true);
-    CHECK(s.state==GIMBAL_ACTIVE && s.last_fault==GIMBAL_OK);
-    /* Gravity holding torque with negligible position error is not a stall. */
-    s.control.rate[1].i=1.8f;
-    for (unsigned i=0;i<220;++i) {
-        p.last_rx_ms=now; ++p.rx_count; step(5,true);
-    }
-    CHECK(s.state==GIMBAL_ACTIVE && !s.pitch_stall_tracking);
     p.motor.pos=0.074255466f;
     p.last_rx_ms=now; ++p.rx_count; cmd.pitch=-1; step(5,true);
     CHECK(s.state==GIMBAL_ACTIVE && torque[1]<=0); /* no outward/down torque */
     p.motor.pos=GIMBAL_PITCH_LOWER_RAW+0.002f;
     p.last_rx_ms=now; ++p.rx_count; step(5,true);
     CHECK(s.state==GIMBAL_STOPPED && s.fault==GIMBAL_LIMIT);
+    step(5,true); CHECK(s.state==GIMBAL_STOPPED); /* held arm never resumes */
     cmd.pitch=0; cmd.yaw=0; cmd.arm=false; step(20,true);
+    CHECK(s.last_fault==GIMBAL_LIMIT); /* survives return to disarm */
     cmd.arm=true; step(5,true); step(5,true);
     p.motor.pos=0.074255466f; p.last_rx_ms=now; ++p.rx_count; step(5,true);
     CHECK(s.state==GIMBAL_ACTIVE && s.last_fault==GIMBAL_OK);
@@ -272,8 +239,6 @@ int main(void)
     step(20,true); CHECK(s.state==GIMBAL_ACTIVE);
     step(20,true); /* world sample now older than WORLD_MS */
     CHECK(s.state==GIMBAL_STOPPED && s.fault==GIMBAL_FEEDBACK);
-    c.pitch_stall_ms=0;
-    CHECK(!GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
     /* A persistent full-stick error builds torque up to the Yaw peak.
      * Reversing or releasing the stick clears the old load compensation. */
     init(); arm();
@@ -281,20 +246,118 @@ int main(void)
         cmd.yaw=(float)direction;
         feedback(1); step(5,true);
         CHECK(torque[0]*cmd.yaw>0 && fabsf(torque[0])<0.1f);
-        for (unsigned i=0; i<400; ++i) {
+        for (unsigned i=0; i<500; ++i) {
             feedback(1); step(5,true);
             CHECK(s.state==GIMBAL_ACTIVE && fabsf(torque[0])<=GIMBAL_YAW_TORQUE_LIMIT);
         }
+        CHECK(fabsf(s.output.rate[0]-cmd.yaw*2.0f)<1e-5f);
         CHECK(fabsf(torque[0]-cmd.yaw*GIMBAL_YAW_TORQUE_LIMIT)<0.01f);
         feedback(1); y.vel=-cmd.yaw*3.0f; step(5,true);
         CHECK(s.state==GIMBAL_ACTIVE && torque[0]==cmd.yaw*GIMBAL_YAW_TORQUE_LIMIT);
+        const float drive_integral=s.control.rate[0].i;
+        cmd.yaw*=0.5f; feedback(1); step(5,true);
+        CHECK(direction*s.control.rate[0].i>=direction*drive_integral); /* stationary load */
     }
     cmd.yaw=0; feedback(1); step(5,true);
     CHECK(torque[0]==0 && s.control.rate[0].i==0);
-    /* Production config: the removed Pitch torque cap lets the rate loop
-     * command well beyond the old 2 N m commissioning limit. A heavy axis is
-     * simulated by freezing the joint; sustained command builds integral past
-     * -2 N m while the commanded torque stays inside the DM4340 MIT range. */
+    /* Reproduce the velocity swings observed near 1.1 rad in separate mode.
+     * The gimbal IMU reads the motion of the load through the gearbox. */
+    c=GimbalSetup_Config();
+    CHECK(Gimbal_Init(&calibrated,&c.control));
+    RobotCommand hold_cmd={.remote_valid=true,.arm=true,.mode=MODE_SEPARATE};
+    GimbalFeedback hold_fb={.joint={1.1f,0},.joint_fresh=true,.world_fresh=true};
+    CHECK(Gimbal_Step(&calibrated,&hold_cmd,&hold_fb,true,0.005f,&out));
+    for (unsigned i=0;i<100;++i) {
+        const float sign=i%2==0 ? 1.0f : -1.0f;
+        hold_fb.joint[0]=1.1f+sign*0.007f;
+        hold_fb.joint_rate[0]=sign*2.7f;
+        hold_fb.world_rate[0]=sign*0.2f;
+        CHECK(Gimbal_Step(&calibrated,&hold_cmd,&hold_fb,true,0.005f,&out));
+        CHECK(fabsf(out.torque[0])<0.7f);
+    }
+    hold_fb.world_fresh=false;
+    CHECK(Gimbal_Step(&calibrated,&hold_cmd,&hold_fb,true,0.005f,&out));
+    CHECK(calibrated.rate[0].previous_measurement==hold_fb.joint_rate[0]);
+    /* If the chassis rotates under a stationary joint, its steady rate
+     * should not be interpreted as relative motion. */
+    hold_fb=(GimbalFeedback){.joint={1.1f,0},.world_rate={1.5f,0},.joint_fresh=true,.world_fresh=true};
+    Gimbal_Reset(&calibrated);
+    CHECK(Gimbal_Step(&calibrated,&hold_cmd,&hold_fb,true,0.005f,&out));
+    CHECK(out.torque[0]==0 && calibrated.rate[0].previous_measurement==0);
+    /* Check direct release, a linear return and a return profile based on
+     * the sampled stick motion. The plant includes drag and one tick of delay. */
+    const float sampled_stick[]={0.94f,0.81f,0.81f,0.244f,0.244f,0.061f,0.014f};
+    const float peak_limit[]={0.03f,0.01f,0.035f}; /* at 2 rad/s full stick */
+    for (int direction=-1; direction<=1; direction+=2) {
+        for (unsigned profile=0; profile<3; ++profile) {
+            const bool sampled=profile==2;
+            const unsigned return_steps=sampled ? 3*(sizeof sampled_stick / sizeof sampled_stick[0]) : 8*profile;
+            const unsigned hold_steps=sampled ? 350 : 260;
+            const GimbalConfig yaw_config=GimbalSetup_Config().control;
+            CHECK(Gimbal_Init(&calibrated,&yaw_config));
+            RobotCommand yaw_cmd={.remote_valid=true,.arm=true,.yaw=(float)direction};
+            GimbalFeedback yaw_fb={.joint_fresh=true,.world_fresh=true};
+            const float dt=0.005f;
+            const float inertia=sampled ? 0.10f : 0.025f;
+            const float drag=sampled ? 0.25f : 0.10f;
+            const unsigned release_step=hold_steps+return_steps;
+            float angle=direction*2.8f, speed=0, delayed_torque=0, release_angle=0, peak=0;
+            for (unsigned i=0;i<release_step+300;++i) {
+                if (i==hold_steps) CHECK(direction*speed>0.9f*yaw_config.yaw_command_rate);
+                if (i>=hold_steps && i<release_step) {
+                    const float stick=sampled ? sampled_stick[(i-hold_steps)/3]
+                        : (float)(release_step-i)/(return_steps+1);
+                    yaw_cmd.yaw=direction*stick;
+                }
+                if (i==release_step) { release_angle=angle; yaw_cmd.yaw=0; }
+                yaw_fb.joint[0]=Motion_Wrap(angle);
+                yaw_fb.joint_rate[0]=speed;
+                yaw_fb.world_rate[0]=speed;
+                CHECK(Gimbal_Step(&calibrated,&yaw_cmd,&yaw_fb,true,dt,&out));
+                if (i<release_step)
+                    CHECK(fabsf(out.rate[0])<=fabsf(yaw_cmd.yaw)*yaw_config.max_rate[0]+1e-5f);
+                speed+=(delayed_torque-drag*speed)*dt/inertia;
+                angle+=speed*dt;
+                delayed_torque=out.torque[0];
+                if (i>=release_step) peak=fmaxf(peak,direction*(angle-release_angle));
+            }
+            CHECK(fabsf(Motion_Wrap(out.target[0]-release_angle))<1e-5f);
+            CHECK(peak<peak_limit[profile]);
+            CHECK(fabsf(angle-release_angle)<0.001f && fabsf(speed)<0.003f);
+        }
+    }
+    /* Hold Yaw 0.82 rad off target for 2 s, as in the hand-disturbance trace,
+     * then release it into an inertial plant with one tick of torque delay. */
+    for (int direction=-1; direction<=1; direction+=2) {
+        const GimbalConfig yaw_config=GimbalSetup_Config().control;
+        CHECK(Gimbal_Init(&calibrated,&yaw_config));
+        const RobotCommand hold={.remote_valid=true,.arm=true};
+        const float target=direction*3.0f, dt=0.005f;
+        GimbalFeedback hand_fb={.joint={target,0},.joint_fresh=true,.world_fresh=true};
+        CHECK(Gimbal_Step(&calibrated,&hold,&hand_fb,true,dt,&out));
+        float angle=target+direction*0.82f, speed=0, peak_overshoot=0, peak_speed=0;
+        hand_fb.joint[0]=Motion_Wrap(angle);
+        for (unsigned i=0;i<400;++i)
+            CHECK(Gimbal_Step(&calibrated,&hold,&hand_fb,true,dt,&out));
+        CHECK(out.rate[0]==-direction*1.00f);
+        CHECK(fabsf(calibrated.rate[0].i)<=0.3501f);
+        float delayed_torque=out.torque[0];
+        for (unsigned i=0;i<650;++i) {
+            hand_fb.joint[0]=Motion_Wrap(angle);
+            hand_fb.joint_rate[0]=hand_fb.world_rate[0]=speed;
+            CHECK(Gimbal_Step(&calibrated,&hold,&hand_fb,true,dt,&out));
+            speed+=(delayed_torque-0.25f*speed)*dt/0.12f;
+            angle+=speed*dt;
+            delayed_torque=out.torque[0];
+            peak_overshoot=fmaxf(peak_overshoot,direction*(target-angle));
+            peak_speed=fmaxf(peak_speed,fabsf(speed));
+        }
+        CHECK(fabsf(Motion_Wrap(out.target[0]-target))<1e-5f);
+        CHECK(peak_overshoot<0.03f && peak_speed<1.10f);
+        CHECK(fabsf(angle-target)<0.002f && fabsf(speed)<0.005f);
+    }
+    /* With fresh feedback at a fixed Pitch position, keep commanding bounded
+     * torque beyond the former stall timeout. Verify that e-stop still cuts it. */
     init(); c=GimbalSetup_Config();
     CHECK(GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
     cmd=(RobotCommand){.remote_valid=true};
@@ -306,22 +369,16 @@ int main(void)
         .motor={.pos=GIMBAL_PITCH_ZERO,.state=1}};
     step(5,true); CHECK(s.state==GIMBAL_ACTIVE);
     cmd.pitch=1;
-    float peak=0;
-    unsigned steps=0;
-    for (; steps<1200 && s.state==GIMBAL_ACTIVE; ++steps) {
+    for (unsigned i=0;i<600;++i) {
         y.last_rx_ms=now; ++y.rx_count;
         p.last_rx_ms=now; ++p.rx_count;
         step(5,true);
-        if (s.state==GIMBAL_ACTIVE && torque[1]<peak) peak=torque[1];
+        CHECK(s.state==GIMBAL_ACTIVE && s.fault==GIMBAL_OK);
+        CHECK(torque[1]<0 && torque[1]>=-DM4340_T_MAX);
     }
-    /* At 2.00 rad/s full stick against a frozen joint the rate loop saturates
-     * the MIT torque range within about a second, so the loaded-stall guard
-     * stops the axis instead of leaving it pushing below the threshold. */
-    CHECK(s.state==GIMBAL_STOPPED && s.fault==GIMBAL_STALL);
-    CHECK(steps>=200 && steps<=1200);
-    CHECK(peak<=-0.9f*DM4340_T_MAX && peak>=-DM4340_T_MAX);
-    c=GimbalSetup_Config(); c.pitch_stall_travel=NAN;
-    CHECK(!GimbalDrive_Init(&s,&c,&buses[0],&buses[1],now));
+    CHECK(torque[1]<=-0.99f*DM4340_T_MAX);
+    cmd.estop=true; step(1,true);
+    CHECK(s.state==GIMBAL_STOPPED && torque[1]==0 && s.control.rate[1].i==0);
     /* Neutral stick preserves the target under either external displacement.
      * Real negative Pitch direction must produce restoring raw torque. */
     for (int direction=-1; direction<=1; direction+=2) {
