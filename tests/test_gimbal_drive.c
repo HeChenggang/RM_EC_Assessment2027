@@ -326,35 +326,42 @@ int main(void)
             CHECK(fabsf(angle-release_angle)<0.001f && fabsf(speed)<0.003f);
         }
     }
-    /* Hold Yaw 0.82 rad off target for 2 s, as in the hand-disturbance trace,
-     * then release it into an inertial plant with one tick of torque delay. */
-    for (int direction=-1; direction<=1; direction+=2) {
-        const GimbalConfig yaw_config=GimbalSetup_Config().control;
-        CHECK(Gimbal_Init(&calibrated,&yaw_config));
-        const RobotCommand hold={.remote_valid=true,.arm=true};
-        const float target=direction*3.0f, dt=0.005f;
-        GimbalFeedback hand_fb={.joint={target,0},.joint_fresh=true,.world_fresh=true};
-        CHECK(Gimbal_Step(&calibrated,&hold,&hand_fb,true,dt,&out));
-        float angle=target+direction*0.82f, speed=0, peak_overshoot=0, peak_speed=0;
-        hand_fb.joint[0]=Motion_Wrap(angle);
-        for (unsigned i=0;i<400;++i)
+    /* Release in both directions after holding the trace displacement or 90 degrees
+     * for 2 s. The inertial plant includes one tick of torque delay. */
+    const float displacement[]={0.82f, MOTION_PI/2.0f};
+    const unsigned near_target_step[]={100, 160}; /* 0.50 s and 0.80 s */
+    for (unsigned scenario=0;scenario<2;++scenario) {
+        for (int direction=-1; direction<=1; direction+=2) {
+            const GimbalConfig yaw_config=GimbalSetup_Config().control;
+            CHECK(Gimbal_Init(&calibrated,&yaw_config));
+            const RobotCommand hold={.remote_valid=true,.arm=true};
+            const float target=direction*3.0f, dt=0.005f;
+            GimbalFeedback hand_fb={.joint={target,0},.joint_fresh=true,.world_fresh=true};
             CHECK(Gimbal_Step(&calibrated,&hold,&hand_fb,true,dt,&out));
-        CHECK(out.rate[0]==-direction*1.00f);
-        CHECK(fabsf(calibrated.rate[0].i)<=0.3501f);
-        float delayed_torque=out.torque[0];
-        for (unsigned i=0;i<650;++i) {
+            float angle=target+direction*displacement[scenario], speed=0, peak_overshoot=0, peak_speed=0;
             hand_fb.joint[0]=Motion_Wrap(angle);
-            hand_fb.joint_rate[0]=hand_fb.world_rate[0]=speed;
-            CHECK(Gimbal_Step(&calibrated,&hold,&hand_fb,true,dt,&out));
-            speed+=(delayed_torque-0.25f*speed)*dt/0.12f;
-            angle+=speed*dt;
-            delayed_torque=out.torque[0];
-            peak_overshoot=fmaxf(peak_overshoot,direction*(target-angle));
-            peak_speed=fmaxf(peak_speed,fabsf(speed));
+            for (unsigned i=0;i<400;++i)
+                CHECK(Gimbal_Step(&calibrated,&hold,&hand_fb,true,dt,&out));
+            CHECK(out.rate[0]==-direction*GIMBAL_YAW_HOLD_MAX_RATE);
+            CHECK(fabsf(calibrated.rate[0].i)<=0.3501f);
+            float delayed_torque=out.torque[0];
+            for (unsigned i=0;i<650;++i) {
+                hand_fb.joint[0]=Motion_Wrap(angle);
+                hand_fb.joint_rate[0]=hand_fb.world_rate[0]=speed;
+                CHECK(Gimbal_Step(&calibrated,&hold,&hand_fb,true,dt,&out));
+                speed+=(delayed_torque-0.25f*speed)*dt/0.12f;
+                angle+=speed*dt;
+                delayed_torque=out.torque[0];
+                peak_overshoot=fmaxf(peak_overshoot,direction*(target-angle));
+                peak_speed=fmaxf(peak_speed,fabsf(speed));
+                if (i+1==near_target_step[scenario])
+                    CHECK(fabsf(angle-target)<0.05f);
+            }
+            CHECK(fabsf(Motion_Wrap(out.target[0]-target))<1e-5f);
+            CHECK(peak_overshoot<0.03f);
+            CHECK(peak_speed>2.40f && peak_speed<GIMBAL_YAW_HOLD_MAX_RATE+0.10f);
+            CHECK(fabsf(angle-target)<0.002f && fabsf(speed)<0.005f);
         }
-        CHECK(fabsf(Motion_Wrap(out.target[0]-target))<1e-5f);
-        CHECK(peak_overshoot<0.03f && peak_speed<1.10f);
-        CHECK(fabsf(angle-target)<0.002f && fabsf(speed)<0.005f);
     }
     /* With fresh feedback at a fixed Pitch position, keep commanding bounded
      * torque beyond the former stall timeout. Verify that e-stop still cuts it. */

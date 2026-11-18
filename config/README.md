@@ -9,7 +9,7 @@
 | M3508 / C620 | 下板 CAN2，左前／左后／右后／右前 ID 1／2／3／4，方向 +1／+1／−1／−1 | [chassis_setup.h](../firmware/chassis/Core/Inc/chassis_setup.h) |
 | 底盘速度环 | 分离和跟随档转子限速 3000 rpm，小陀螺档 4500 rpm。原始电流上限 ±4000，Kp=4、Ki=3、Kd=0，积分贡献 ±650 | 同上 |
 | 底盘指令 | 平移上限 1.80 m/s，加速度 1.20 m/s²，松杆立即给零平移目标。跟随 Kp=5.5，角加速度 4.00 rad/s²，按偏角提前减速。跟随转速上限和小陀螺设定均为 3.00 rad/s | 同上 |
-| Yaw DM-J4310 | 上板 CAN1，TX 0x03、RX 0x13，方向 +1，零位 −0.697036878 rad，输出上限 7.00 N·m（峰值，额定 3.00 N·m），速度环 Kp=1.20、Ki=3.0。满杆速度参考上限 2.00 rad/s，回中后回正限速 1.00 rad/s、角度环 Kp=8.0、积分贡献上限 ±0.35 N·m | [gimbal_board.h](gimbal_board.h)、[gimbal_setup.h](gimbal_setup.h) |
+| Yaw DM-J4310 | 上板 CAN1，TX 0x03、RX 0x13，方向 +1，零位 −0.697036878 rad，输出上限 7.00 N·m（峰值，额定 3.00 N·m），速度环 Kp=1.20、Ki=3.0。满杆速度参考上限 2.00 rad/s，回中后回正限速 3.00 rad/s、角度环 Kp=5.9、积分贡献上限 ±0.35 N·m | [gimbal_board.h](gimbal_board.h)、[gimbal_setup.h](gimbal_setup.h) |
 | Pitch DM-J4340 | 上板 CAN2，TX 0x09、RX 0x19，方向 −1，原始零位 −0.184 rad。原始边界 0.074 和 −1.143 rad，对应 −0.258 到 +0.959 rad。速度参考上限 2.00 rad/s（`GIMBAL_PITCH_MAX_RATE`），静止保持刚度 150 N·m/rad（`GIMBAL_PITCH_HOLD_KP`），输出上限 28 N·m | 同上 |
 | BMI088 | 上板 SPI1，安装变换为单位矩阵，固定零偏 0 °/s。代码记录俯视逆时针对应正 Yaw，静态漂移约 +0.19°/10.1 s | 同上 |
 

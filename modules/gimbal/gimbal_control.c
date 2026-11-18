@@ -154,7 +154,7 @@ bool Gimbal_Step(GimbalControl *s, const RobotCommand *cmd,
         const float angle_kp = yaw_hold && c->yaw_hold_angle_kp > 0.0f
             ? c->yaw_hold_angle_kp : c->angle_kp[i];
         const float rate_limit = yaw_hold && c->yaw_hold_max_rate > 0.0f
-            ? fminf(c->yaw_hold_max_rate, c->max_rate[0]) : c->max_rate[i];
+            ? c->yaw_hold_max_rate : c->max_rate[i];
         const float requested = angle_kp * error;
         if (!isfinite(requested)) goto stop;
         result.rate[i] = Motion_Clamp(requested, rate_limit);

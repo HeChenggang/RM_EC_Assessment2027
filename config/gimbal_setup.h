@@ -87,13 +87,13 @@
  * The DM-J4310-2EC peak torque is 7 N m and its rating is 3 N m. */
 #define GIMBAL_YAW_SPEED_KP 1.20f
 #define GIMBAL_YAW_SPEED_KI 3.0f
-#define GIMBAL_YAW_HOLD_ANGLE_KP 8.0f
+#define GIMBAL_YAW_HOLD_ANGLE_KP 5.9f
 #define GIMBAL_YAW_HOLD_INTEGRAL_LIMIT 0.35f /* N m at neutral */
 /* Time constant for estimating chassis rotation from IMU and joint rates. */
 #define GIMBAL_YAW_JOINT_RATE_TAU 0.04f
 #define GIMBAL_YAW_TORQUE_LIMIT 7.00f
 #define GIMBAL_YAW_MAX_RATE 2.00f /* rad/s, full-stick heading rate and outer-loop limit */
-#define GIMBAL_YAW_HOLD_MAX_RATE 1.00f /* rad/s, return to the neutral hold target */
+#define GIMBAL_YAW_HOLD_MAX_RATE 3.00f /* rad/s, return to the neutral hold target */
 /* Allow full torque at maximum rate reference with zero measured speed. */
 #define GIMBAL_YAW_INTEGRAL_LIMIT (GIMBAL_YAW_TORQUE_LIMIT - GIMBAL_YAW_SPEED_KP * GIMBAL_YAW_MAX_RATE)
 
